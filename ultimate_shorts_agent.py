@@ -107,6 +107,19 @@ TTS_VOICE    = "hi-IN-SwaraNeural"     # cute girl (or hi-IN-MadhurNeural for bo
 TTS_RATE     = "+8%"                    # slightly faster, lively
 TTS_PITCH    = "+22Hz"                  # higher = cuter, child-like
 MUSIC_VOLUME = 0.0                      # background music level (0.0 = OFF; e.g. 0.08 = quiet)
+
+# Reach / SEO — niche hashtags appended to every description, and base keywords
+# merged into tags so YouTube surfaces the video in search + suggested.
+SEO_HASHTAGS = [
+    "#Shorts", "#hindikahani", "#kahani", "#bachonkikahani", "#moralstory",
+    "#hindicartoon", "#kidsstory", "#storytime", "#viralshorts", "#trending",
+    "#hindistories", "#cartoonstory",
+]
+SEO_BASE_TAGS = [
+    "hindi kahani", "bachon ki kahani", "moral story hindi", "hindi cartoon",
+    "kids story hindi", "cartoon kahani", "hindi moral stories",
+    "bedtime stories hindi", "hindi stories for kids", "shorts",
+]
 TARGET_SECONDS_MIN = 40                # acceptable video length window
 TARGET_SECONDS_MAX = 55
 
@@ -396,9 +409,14 @@ Rules:
 
 Return ONLY a JSON object with EXACTLY these keys:
 
-- "Title": catchy Hindi/Hinglish YouTube title with 1-2 emojis (short).
-- "Description": 2-3 line Hindi description + a subscribe request + 3 hashtags.
-- "Tags": array of 8-12 relevant hindi/english tags (no '#').
+- "Title": a HIGH-SEO, catchy Hindi/Hinglish YouTube title (under ~70 chars,
+  1-2 emojis). Front-load a searchable keyword people actually type (e.g.
+  "हिंदी कहानी", "moral story", "bachon ki kahani") AND a curiosity hook.
+- "Description": 2-3 lines of natural Hindi. First line keyword-rich (repeat the
+  main topic + words like "हिंदी कहानी", "moral story", "cartoon"), then a short
+  subscribe request. Do NOT add hashtags yourself (they are added automatically).
+- "Tags": array of 10-15 relevant hindi + english SEO keywords (no '#'), mixing
+  the specific topic with broad terms viewers search.
 - "Narration": the FULL story narration as ONE Hindi paragraph (this is the
   spoken voiceover — no scene labels, no English, no stage directions).
 - "Scenes": an array of EXACTLY {num_scenes} objects, in order, each with:
@@ -436,7 +454,22 @@ wholesome. Output valid JSON only.
     tags = data["Tags"]
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",")]
-    data["Tags"] = [str(t).lstrip("#").strip() for t in tags if str(t).strip()]
+    tags = [str(t).lstrip("#").strip() for t in tags if str(t).strip()]
+    # SEO: merge in evergreen base tags, de-dupe (case-insensitive), cap at 15.
+    seen, merged = set(), []
+    for t in tags + SEO_BASE_TAGS:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            merged.append(t)
+    data["Tags"] = merged[:15]
+
+    # SEO: append niche hashtags to the description (YouTube ignores >15 total,
+    # so cap them). Skip hashtags already present.
+    desc = str(data["Description"]).strip()
+    have = {w.lower() for w in desc.split() if w.startswith("#")}
+    add = [h for h in SEO_HASHTAGS if h.lower() not in have][:max(0, 13 - len(have))]
+    if add:
+        data["Description"] = desc + "\n\n" + " ".join(add)
 
     # Scenes -> list of {image_prompt, video_prompt, narration_hi}.
     scenes = []
@@ -1109,7 +1142,34 @@ def upload_to_youtube(cfg, video_path, seo):
     video_id = response["id"]
     url = f"https://www.youtube.com/watch?v={video_id}"
     log.info("YouTube: upload complete -> %s", url)
+
+    # SEO: set a custom thumbnail from a frame of the video (best-effort).
+    _set_thumbnail(youtube, video_id, video_path)
     return url
+
+
+def _set_thumbnail(youtube, video_id, video_path):
+    """Grab a frame from the video and set it as the custom thumbnail.
+    Best-effort: needs a phone-verified channel; never breaks the pipeline."""
+    try:
+        import imageio_ffmpeg
+        from googleapiclient.http import MediaFileUpload
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        thumb = os.path.join(WORK_DIR, f"thumb_{video_id}.jpg")
+        _run_ffmpeg([ffmpeg, "-y", "-ss", "1.5", "-i", video_path,
+                     "-frames:v", "1", "-q:v", "2", thumb])
+        youtube.thumbnails().set(
+            videoId=video_id,
+            media_body=MediaFileUpload(thumb, mimetype="image/jpeg"),
+        ).execute()
+        log.info("YouTube: custom thumbnail set.")
+        try:
+            os.remove(thumb)
+        except OSError:
+            pass
+    except Exception as exc:                                   # noqa: BLE001
+        log.warning("Thumbnail skipped (%s). Verify the channel (phone) to "
+                    "enable custom thumbnails.", exc)
 
 
 # --------------------------------------------------------------------------- #
