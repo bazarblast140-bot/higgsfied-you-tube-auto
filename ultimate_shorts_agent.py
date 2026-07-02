@@ -120,6 +120,17 @@ SEO_BASE_TAGS = [
     "kids story hindi", "cartoon kahani", "hindi moral stories",
     "bedtime stories hindi", "hindi stories for kids", "shorts",
 ]
+
+# Visual freshness — a random mood/palette per video keeps the 3D-cartoon brand
+# consistent while making each upload look distinct (helps avoid YouTube's
+# "repetitive / mass-produced" flag that can block monetization).
+STYLE_FLAVORS = [
+    "warm golden sunset tones", "bright cheerful daytime colours",
+    "cozy cool evening blue tones", "vibrant rainbow pastel palette",
+    "soft dreamy morning light", "festive colourful decorations",
+    "lush green nature setting", "magical sparkly glow",
+    "rainy-day cozy mood", "snowy winter wonderland tones",
+]
 TARGET_SECONDS_MIN = 40                # acceptable video length window
 TARGET_SECONDS_MAX = 55
 
@@ -380,9 +391,12 @@ def generate_content_package(cfg, topic):
     """
     import anthropic
 
+    import random
+
     client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
     model = cfg.get("anthropic_model", "claude-opus-4-8")
     num_scenes = int(cfg.get("num_scenes", NUM_SCENES))
+    flavor = random.choice(STYLE_FLAVORS)
 
     system_prompt = (
         "You are a Hindi children's cartoon story writer for a YouTube Shorts "
@@ -398,6 +412,7 @@ TOPIC: "{topic}"
 
 Rules:
 - Style: 3D Pixar/Disney animation, vertical 9:16, bright colourful, cinematic.
+- Visual mood for THIS video (use it in every scene's image_prompt): {flavor}.
 - Characters: 1-2 cute little Indian kids (and/or cute animals) with big
   expressive eyes. Define each main character ONCE with a detailed look
   (age, clothes, hair, colours) and REUSE that exact description in EVERY
@@ -423,8 +438,12 @@ Return ONLY a JSON object with EXACTLY these keys:
     - "image_prompt": a detailed ENGLISH image prompt. It MUST start with
       "3D Pixar-style animation," include the FULL consistent character
       description(s), describe this scene, and end with
-      "vertical 9:16 composition, wholesome". Bright, cinematic, ultra-detailed.
-      NO text/letters/words/numbers/logos anywhere in the image.
+      "vertical 9:16 composition, wholesome". Make it PREMIUM and characterful:
+      award-winning high-end Pixar/DreamWorks-quality 3D render, ultra-detailed
+      hyper-realistic fur/skin/fabric textures, expressive charismatic faces,
+      cinematic studio lighting, soft depth of field, rich vivid colours, 8K,
+      like a polished animated movie poster. NO text/letters/words/numbers/logos
+      anywhere in the image.
     - "video_prompt": a detailed ENGLISH motion prompt describing what the
       characters DO in this scene (gestures, actions, natural blinking, gentle
       cute movements, expressions).
@@ -742,6 +761,25 @@ def _download_url(url, out_path):
                 f.write(chunk)
 
 
+def _free_image_url(prompt, seed=None):
+    """Public 9:16 image URL from the FREE Pollinations.ai (Flux) generator —
+    no key, no cost. Deterministic per (prompt, seed)."""
+    from urllib.parse import quote
+    import random
+    if seed is None:
+        seed = random.randint(1, 9_000_000)
+    return ("https://image.pollinations.ai/prompt/" + quote(prompt)
+            + f"?width=1080&height=1920&nologo=true&model=flux&seed={seed}")
+
+
+def _warm_free_image(url):
+    """Fetch the free image once so it is generated + cached before Higgsfield
+    pulls it. Returns True if it looks like a valid image."""
+    import requests
+    r = requests.get(url, timeout=120)
+    return r.status_code == 200 and len(r.content) > 5000
+
+
 # --------------------------------------------------------------------------- #
 #  STEP 2b — Hindi voiceover (free edge-tts)
 # --------------------------------------------------------------------------- #
@@ -777,7 +815,20 @@ def synthesize_hindi_voice(cfg, narration, out_path):
 #  STEP 2c — Scene images (Higgsfield Soul, 3D Pixar style)
 # --------------------------------------------------------------------------- #
 def generate_scene_image(cfg, visual_prompt, out_path):
-    """Render one 9:16 image via Higgsfield Soul and download it to out_path."""
+    """Render one 9:16 image and download it to out_path. Uses the FREE
+    Pollinations generator when image_provider='pollinations' (default), falling
+    back to Higgsfield Soul on failure."""
+    provider = cfg.get("image_provider", "pollinations")
+    if provider in ("pollinations", "free"):
+        try:
+            _download_url(_free_image_url(visual_prompt), out_path)
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 5000:
+                return out_path
+            log.warning("Free image looked empty; falling back to Higgsfield.")
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("Free image failed (%s); falling back to Higgsfield.",
+                        str(exc)[:120])
+
     A = HIGGSFIELD_API
     api_key = cfg.get("higgsfield_api_key", "").strip()
     if not api_key:
@@ -816,15 +867,27 @@ def generate_scene_clip(cfg, image_prompt, video_prompt, out_path):
         "Authorization": f"Key {api_key}",
         "Content-Type": "application/json",
     }
-    # 1) text -> image (Soul), from the scene's image_prompt
-    image_url = _hf_submit_and_wait(
-        A, headers, A["text2image_path"],
-        {
-            "prompt": image_prompt,
-            "width_and_height": cfg.get("higgsfield_image_size", A["image_size"]),
-        },
-        kind="image",
-    )
+    # 1) get the scene image. FREE Pollinations by default (saves Higgsfield
+    #    image credits); Higgsfield DoP then animates that image URL directly.
+    image_url = None
+    if cfg.get("image_provider", "pollinations") in ("pollinations", "free"):
+        try:
+            u = _free_image_url(image_prompt)
+            if _warm_free_image(u):          # generate + cache before DoP pulls it
+                image_url = u
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("Free image failed (%s); using Higgsfield Soul.",
+                        str(exc)[:120])
+    if not image_url:                        # fallback: paid Higgsfield Soul
+        image_url = _hf_submit_and_wait(
+            A, headers, A["text2image_path"],
+            {
+                "prompt": image_prompt,
+                "width_and_height": cfg.get("higgsfield_image_size",
+                                            A["image_size"]),
+            },
+            kind="image",
+        )
     # 2) image -> video (DoP), motion from the scene's video_prompt
     video_url = _hf_submit_and_wait(
         A, headers, A["image2video_path"],
