@@ -104,7 +104,7 @@ HIGGSFIELD_API = {
 # Kids cartoon-story settings (NITIN CARTOON ZONE style).
 NUM_SCENES   = 6                       # scenes per story (~40-50s total)
 TTS_VOICE    = "hi-IN-SwaraNeural"     # cute girl (or hi-IN-MadhurNeural for boy)
-TTS_RATE     = "+8%"                    # slightly faster, lively
+TTS_RATE     = "+18%"                   # faster + energetic (grabs attention)
 TTS_PITCH    = "+22Hz"                  # higher = cuter, child-like
 MUSIC_VOLUME = 0.0                      # background music level (0.0 = OFF; e.g. 0.08 = quiet)
 
@@ -413,10 +413,13 @@ TOPIC: "{topic}"
 Rules:
 - Style: 3D Pixar/Disney animation, vertical 9:16, bright colourful, cinematic.
 - Visual mood for THIS video (use it in every scene's image_prompt): {flavor}.
-- Characters: 1-2 cute little Indian kids (and/or cute animals) with big
-  expressive eyes. Define each main character ONCE with a detailed look
-  (age, clothes, hair, colours) and REUSE that exact description in EVERY
-  scene's image_prompt so the character stays consistent across scenes.
+- Characters: pick a FRESH, DIFFERENT and fun main character for THIS story —
+  vary it every time (e.g. a cute animal like a fox/panda/elephant/monkey, a
+  quirky bird, a friendly robot, a talking fruit/vegetable, or an Indian kid) —
+  so every video looks new and distinct. Give it big expressive eyes and lots of
+  personality. Define each main character ONCE with a detailed look (species/age,
+  clothes, colours, features) and REUSE that exact description in EVERY scene's
+  image_prompt so the character stays consistent across scenes.
 - Story arc across the {num_scenes} scenes: setup -> action -> a funny or
   emotional twist -> happy ending with a clear moral (seekh).
 - Narration: simple, fluent, natural Hindi as a child narrator would tell it.
