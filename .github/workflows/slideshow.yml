@@ -1,0 +1,29 @@
+name: Slideshow Long Video
+
+on:
+  workflow_dispatch:
+
+jobs:
+  make-slideshow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+      - name: Write secret config files
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
+        run: |
+          printf '%s' "$CONFIG_JSON" > config.json
+          printf '%s' "$TOKEN_JSON" > token.json
+      - name: Generate and upload the slideshow video
+        run: python ultimate_shorts_agent.py slideshow
