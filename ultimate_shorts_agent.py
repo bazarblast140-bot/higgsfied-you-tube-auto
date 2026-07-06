@@ -76,6 +76,7 @@ ARCHIVE_DIR   = os.path.join(BASE_DIR, "archive")
 WORK_DIR      = os.path.join(BASE_DIR, "work")          # transient render space
 LOG_DIR       = os.path.join(BASE_DIR, "logs")
 TOPIC_BANK    = os.path.join(BASE_DIR, "topic_bank.json")   # kids-story topics
+SLIDESHOW_BANK = os.path.join(BASE_DIR, "slideshow_topics.json")  # sabzi drama/horror
 
 YOUTUBE_UPLOAD_SCOPE = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -106,7 +107,15 @@ NUM_SCENES   = 6                       # scenes per story (~40-50s total)
 TTS_VOICE    = "hi-IN-SwaraNeural"     # cute girl (or hi-IN-MadhurNeural for boy)
 TTS_RATE     = "+18%"                   # faster + energetic (grabs attention)
 TTS_PITCH    = "+22Hz"                  # higher = cuter, child-like
-MUSIC_VOLUME = 0.0                      # background music level (0.0 = OFF; e.g. 0.08 = quiet)
+MUSIC_VOLUME = 0.0                      # background music level for SHORTS (0.0 = OFF)
+
+# Slideshow long-video settings (sabzi/veggie emotional + horror stories).
+NUM_SLIDESHOW_SCENES = 24               # still images across a ~3 min video
+SLIDESHOW_VOICE      = "hi-IN-MadhurNeural"   # mature storyteller voice
+SLIDESHOW_RATE       = "+0%"            # natural storytelling pace
+SLIDESHOW_PITCH      = "+0Hz"
+SLIDESHOW_MUSIC_VOLUME = 0.18           # emotional/scary music under the voiceover
+FREE_IMAGE_DELAY_S   = 3                # gap between free-image calls (avoid rate-limit)
 
 # Reach / SEO — niche hashtags appended to every description, and base keywords
 # merged into tags so YouTube surfaces the video in search + suggested.
@@ -130,6 +139,18 @@ STYLE_FLAVORS = [
     "soft dreamy morning light", "festive colourful decorations",
     "lush green nature setting", "magical sparkly glow",
     "rainy-day cozy mood", "snowy winter wonderland tones",
+]
+
+# SEO for the sabzi/veggie slideshow long videos.
+SLIDESHOW_HASHTAGS = [
+    "#Shorts", "#sabjikahani", "#sabzicartoon", "#hindikahani", "#kahani",
+    "#emotionalstory", "#vegetablecartoon", "#viralshorts", "#trending",
+    "#hindistory", "#gaonkikahani", "#dilchhukahani",
+]
+SLIDESHOW_TAGS = [
+    "sabzi kahani", "sabzi cartoon", "vegetable cartoon hindi", "hindi kahani",
+    "emotional story hindi", "aalu kahani", "gaon ki kahani", "hindi story",
+    "dil chhu lene wali kahani", "sabji cartoon story",
 ]
 TARGET_SECONDS_MIN = 40                # acceptable video length window
 TARGET_SECONDS_MAX = 55
@@ -262,6 +283,33 @@ def pick_topic(cfg):
     except Exception as exc:                            # noqa: BLE001
         log.warning("Topic bank read failed (%s); using trend/fallback.", exc)
         return fetch_trending_topic(cfg)
+
+
+def pick_slideshow_topic(cfg):
+    """
+    Pick an UNUSED sabzi/veggie slideshow premise from slideshow_topics.json and
+    its mood ("emotional" or "scary"), mark it used, reset when all used.
+    Returns {"topic","category","mood"}.
+    """
+    import random
+    with open(SLIDESHOW_BANK, "r", encoding="utf-8") as f:
+        bank = json.load(f)
+    cats = bank.get("categories", {})
+    used = set(bank.get("used_topics", []))
+    all_topics = [(c, t) for c, lst in cats.items() for t in lst]
+    pool = [(c, t) for c, t in all_topics if t not in used]
+    if not pool:
+        log.info("Slideshow topics exhausted; resetting used list.")
+        used = set()
+        pool = all_topics
+    cat, topic = random.choice(pool)
+    used.add(topic)
+    bank["used_topics"] = sorted(used)
+    with open(SLIDESHOW_BANK, "w", encoding="utf-8") as f:
+        json.dump(bank, f, ensure_ascii=False, indent=2)
+    mood = "scary" if cat == "horror_suspense" else "emotional"
+    log.info("Slideshow topic (%s / %s): %s", cat, mood, topic)
+    return {"topic": topic, "category": cat, "mood": mood}
 
 
 def fetch_trending_topic(cfg):
@@ -553,6 +601,115 @@ def generate_hook(cfg, topic):
         return ""
 
 
+def generate_slideshow_content(cfg, topic, mood):
+    """
+    Claude writes a ~3-minute HINDI 'sabzi cartoon' story (vegetables/fruits as
+    people in an Indian village). `mood` is "emotional" (poor-vs-rich drama,
+    betrayal, sacrifice, tears, moral) or "scary" (family-safe village
+    horror/suspense). Returns:
+        Title, Description, Tags, Narration (full Hindi voiceover),
+        ScenePrompts = [English image prompt, ...]  (NUM_SLIDESHOW_SCENES of them)
+    """
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
+    model = cfg.get("anthropic_model", "claude-opus-4-8")
+    n = int(cfg.get("num_slideshow_scenes", NUM_SLIDESHOW_SCENES))
+
+    if mood == "scary":
+        tone = ("a family-safe SPOOKY village horror/suspense story — mystery, "
+                "eerie atmosphere, fear and a chilling twist, but NO gore or "
+                "adult content")
+        light = ("dark eerie night, moonlight, fog, cold blue/green tones, "
+                 "spooky cinematic shadows")
+    else:
+        tone = ("a heart-touching EMOTIONAL drama — poor vs rich, love, "
+                "betrayal, sacrifice, tears, and a moving twist with a moral")
+        light = ("warm golden or soft sad cinematic lighting, rural Indian "
+                 "village, emotional atmosphere")
+
+    system_prompt = (
+        "You are a scriptwriter for a viral HINDI 'sabzi (vegetable) cartoon' "
+        "storytelling YouTube channel (like Sabzi Cartoon TV / Kahani Manthan). "
+        "All characters are vegetables and fruits living as people in an Indian "
+        "village (aalu/potato, tamatar/tomato, mooli/radish, pyaaz/onion, "
+        "baingan/brinjal, karela, mirchi, etc.), wearing Indian clothes. You "
+        "always respond with a single valid JSON object and nothing else."
+    )
+    user_prompt = f"""
+Write {tone} for this premise, as a ~3 minute HINDI video:
+
+PREMISE: "{topic}"
+
+Return ONLY a JSON object with EXACTLY these keys:
+
+- "Title": a dramatic, emotional, high-CTR Hindi title with 1-2 emojis (like the
+  viral sabzi-cartoon channels), that makes people want to click.
+- "Description": 3-5 lines of emotional Hindi — a teaser of the story, 2-3
+  curiosity questions ("क्या ...?"), the moral/message, and a subscribe request.
+  Do NOT add hashtags (added automatically).
+- "Tags": array of 10-15 relevant hindi/english SEO keywords (no '#').
+- "Narration": a SINGLE flowing HINDI (Devanagari) voiceover paragraph of about
+  350-420 words (spoken for ~3 minutes) — an engaging storyteller telling the
+  whole story start to end (strong hook, rising drama, emotional/scary climax,
+  twist, and a closing moral + CTA). Only spoken words, no scene labels.
+- "Scenes": an array of EXACTLY {n} objects, in order, each with ONE key
+  "visual_prompt": a detailed ENGLISH image prompt showing this beat of the
+  story. Characters are cute-but-expressive vegetable/fruit PEOPLE (veggie head +
+  human body in Indian clothes) in an Indian village. Style: cinematic 3D
+  Pixar/realistic render, ultra-detailed, {light}, 9:16 vertical composition.
+  Absolutely NO text, letters, numbers, words or logos in the image. Keep the
+  main characters visually consistent across scenes.
+
+Constraints: Narration in Hindi ~350-420 words. EXACTLY {n} scenes. Output valid
+JSON only.
+"""
+
+    resp = client.messages.create(
+        model=model, max_tokens=8000, system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    raw = "".join(b.text for b in resp.content if b.type == "text")
+    data = json.loads(_extract_json(raw))
+
+    for key in ("Title", "Description", "Tags", "Narration", "Scenes"):
+        if key not in data or not data[key]:
+            raise ValueError(f"Claude slideshow response missing key: {key}")
+
+    data["Title"] = str(data["Title"]).strip()[:100]
+
+    tags = data["Tags"]
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",")]
+    tags = [str(t).lstrip("#").strip() for t in tags if str(t).strip()]
+    seen, merged = set(), []
+    for t in tags + SLIDESHOW_TAGS:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            merged.append(t)
+    data["Tags"] = merged[:15]
+
+    desc = str(data["Description"]).strip()
+    have = {w.lower() for w in desc.split() if w.startswith("#")}
+    add = [h for h in SLIDESHOW_HASHTAGS
+           if h.lower() not in have][:max(0, 13 - len(have))]
+    if add:
+        data["Description"] = desc + "\n\n" + " ".join(add)
+
+    prompts = []
+    for sc in data["Scenes"]:
+        vp = sc.get("visual_prompt") if isinstance(sc, dict) else sc
+        if vp and str(vp).strip():
+            prompts.append(str(vp).strip())
+    if not prompts:
+        raise ValueError("Slideshow response produced no scene prompts.")
+    data["ScenePrompts"] = prompts
+
+    log.info("Slideshow story ready. Title: %s | %d scenes | narration %d chars",
+             data["Title"], len(prompts), len(str(data["Narration"])))
+    return data
+
+
 # --------------------------------------------------------------------------- #
 #  STEP 2a — Higgsfield render via Cloud REST API
 # --------------------------------------------------------------------------- #
@@ -786,15 +943,16 @@ def _warm_free_image(url):
 # --------------------------------------------------------------------------- #
 #  STEP 2b — Hindi voiceover (free edge-tts)
 # --------------------------------------------------------------------------- #
-def synthesize_hindi_voice(cfg, narration, out_path):
+def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
+                           _tts_rate_override=None, _tts_pitch_override=None):
     """Generate a Hindi voiceover mp3 from `narration` (free Microsoft TTS).
     Returns (out_path, duration_seconds)."""
     import asyncio
     import edge_tts
 
-    voice = cfg.get("tts_voice", TTS_VOICE)
-    rate = cfg.get("tts_rate", TTS_RATE)
-    pitch = cfg.get("tts_pitch", TTS_PITCH)
+    voice = _tts_voice_override or cfg.get("tts_voice", TTS_VOICE)
+    rate = _tts_rate_override if _tts_rate_override is not None else cfg.get("tts_rate", TTS_RATE)
+    pitch = _tts_pitch_override if _tts_pitch_override is not None else cfg.get("tts_pitch", TTS_PITCH)
     log.info("TTS: generating Hindi voiceover (%s, rate %s, pitch %s)...",
              voice, rate, pitch)
 
@@ -956,15 +1114,50 @@ def _safe_prompt(prompt):
             "innocent and heartwarming, no realism. " + prompt)
 
 
+def render_slideshow_images(cfg, prompts, run_id):
+    """
+    Generate one FREE (Pollinations) image per slideshow scene prompt, with a
+    small delay between calls so the free service doesn't rate-limit (which
+    returns a wrong/duplicate image). Resilient: retry once with a safe-reworded
+    prompt, skip on repeated failure. Returns the list of image paths.
+    """
+    import time as _time
+    paths = []
+    total = len(prompts)
+    for i, prompt in enumerate(prompts, 1):
+        out = os.path.join(WORK_DIR, f"slide_{run_id}_{i}.png")
+        safe = ("Wholesome family-friendly cartoon illustration, no real "
+                "people, fully clothed. " + prompt)
+        for attempt, p in enumerate((prompt, safe), 1):
+            try:
+                log.info("Slideshow image %d/%d (try %d)...", i, total, attempt)
+                generate_scene_image(cfg, p, out)
+                paths.append(out)
+                break
+            except Exception as exc:                          # noqa: BLE001
+                log.warning("Slide %d try %d failed (%s).", i, attempt,
+                            str(exc)[:120])
+        else:
+            log.warning("Slide %d skipped after retries.", i)
+        if i < total:
+            _time.sleep(FREE_IMAGE_DELAY_S)
+    if not paths:
+        raise RuntimeError("All slideshow images failed to render.")
+    log.info("Rendered %d/%d slideshow images.", len(paths), total)
+    return paths
+
+
 # --------------------------------------------------------------------------- #
 #  STEP 2d — Assemble the video (images + Ken Burns + voiceover + music)
 # --------------------------------------------------------------------------- #
-def assemble_video(image_paths, voice_path, voice_dur, out_path):
+def assemble_video(image_paths, voice_path, voice_dur, out_path,
+                   music_dir=None, music_volume=None):
     """
     Build a 9:16 slideshow with ffmpeg (fast, native): each image gets a slow
     Ken Burns PAN (via the crop filter on a pre-upscaled still) for an equal
     slice of the voiceover; the Hindi voiceover plays on top with optional
-    royalty-free background music ducked underneath.
+    royalty-free background music ducked underneath. `music_dir` / `music_volume`
+    override the defaults (e.g. a mood folder + louder music for slideshows).
 
     Uses ffmpeg directly because per-frame compositing in MoviePy is far too
     slow for an automated pipeline (~minutes vs ~an hour).
@@ -975,16 +1168,18 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path):
     import imageio_ffmpeg
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    mdir = music_dir or MUSIC_DIR
+    mvol = MUSIC_VOLUME if music_volume is None else music_volume
     W, H = 1080, 1920
     SW, SH = 1296, 2304            # 1.2x upscale -> headroom for the pan
     fps = 30
     n = max(1, len(image_paths))
     per = (voice_dur + 1.0) / n    # hold each image a touch past the VO end
 
-    tracks = (glob.glob(os.path.join(MUSIC_DIR, "*.mp3"))
-              + glob.glob(os.path.join(MUSIC_DIR, "*.wav"))
-              + glob.glob(os.path.join(MUSIC_DIR, "*.m4a")))
-    music = random.choice(tracks) if (tracks and MUSIC_VOLUME > 0) else None
+    tracks = (glob.glob(os.path.join(mdir, "*.mp3"))
+              + glob.glob(os.path.join(mdir, "*.wav"))
+              + glob.glob(os.path.join(mdir, "*.m4a")))
+    music = random.choice(tracks) if (tracks and mvol > 0) else None
 
     cmd = [ffmpeg, "-y"]
     for img in image_paths:
@@ -1011,7 +1206,7 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path):
 
     voice_idx = n
     if music:
-        fc.append(f"[{n + 1}:a]volume={MUSIC_VOLUME},aloop=loop=-1:size=2000000000[mus]")
+        fc.append(f"[{n + 1}:a]volume={mvol},aloop=loop=-1:size=2000000000[mus]")
         fc.append(f"[{voice_idx}:a][mus]amix=inputs=2:duration=first:"
                   f"dropout_transition=0[aout]")
         amap = "[aout]"
@@ -1355,6 +1550,67 @@ def run_pipeline():
             )
 
 
+def run_slideshow_pipeline():
+    """One SLIDESHOW long-video run: sabzi/veggie premise -> ~3 min Hindi story
+    -> free images -> storyteller voiceover -> 9:16 Ken Burns slideshow + mood
+    music -> YouTube. Near-free (only Claude text costs)."""
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log.info("=" * 70)
+    log.info("SLIDESHOW RUN START (id=%s)", run_id)
+    log.info("=" * 70)
+
+    cfg = None
+    pkg = None
+    voice_path = os.path.join(WORK_DIR, f"sv_{run_id}.mp3")
+    final_video = os.path.join(WORK_DIR, f"slide_{run_id}.mp4")
+    img_paths = []
+
+    try:
+        ensure_dirs()
+        cfg = load_config()
+
+        # 1. sabzi topic + ~3 min story ---------------------------------- #
+        topic = pick_slideshow_topic(cfg)
+        pkg = generate_slideshow_content(cfg, topic["topic"], topic["mood"])
+
+        # 2. storyteller voiceover + FREE scene images ------------------- #
+        _, vdur = synthesize_hindi_voice(
+            cfg, pkg["Narration"], voice_path,
+            _tts_voice_override=cfg.get("slideshow_voice", SLIDESHOW_VOICE),
+            _tts_rate_override=cfg.get("slideshow_rate", SLIDESHOW_RATE),
+            _tts_pitch_override=cfg.get("slideshow_pitch", SLIDESHOW_PITCH),
+        )
+        img_paths = render_slideshow_images(cfg, pkg["ScenePrompts"], run_id)
+
+        # 3. 9:16 Ken Burns slideshow + mood music ----------------------- #
+        mood_dir = os.path.join(MUSIC_DIR, topic["mood"])
+        assemble_video(img_paths, voice_path, vdur, final_video,
+                       music_dir=mood_dir, music_volume=SLIDESHOW_MUSIC_VOLUME)
+
+        # 4. upload + notify --------------------------------------------- #
+        url = upload_to_youtube(cfg, final_video, pkg)
+        send_telegram(
+            cfg,
+            "✅ Slideshow uploaded!\n\n"
+            f"🎬 {pkg['Title']}\n"
+            f"📖 {topic['topic']} ({topic['mood']})\n"
+            f"🔗 {url}",
+        )
+        for p in img_paths + [voice_path, final_video]:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+        log.info("SLIDESHOW RUN SUCCESS (id=%s)", run_id)
+
+    except Exception as exc:                                  # noqa: BLE001
+        log.error("SLIDESHOW RUN FAILED (id=%s): %s", run_id, exc)
+        log.error(traceback.format_exc())
+        if cfg is not None:
+            send_telegram(cfg, f"❌ Slideshow FAILED (id={run_id})\nError: {exc}")
+
+
 # --------------------------------------------------------------------------- #
 #  Scheduler — twice daily at 08:00 & 18:00 IST
 # --------------------------------------------------------------------------- #
@@ -1410,9 +1666,14 @@ def main():
 
 
 if __name__ == "__main__":
-    # CLI helpers:  `python ultimate_shorts_agent.py run`  -> one-shot run now
-    #               `python ultimate_shorts_agent.py`      -> start scheduler
-    if len(sys.argv) > 1 and sys.argv[1].lower() == "run":
+    # CLI helpers:
+    #   python ultimate_shorts_agent.py run        -> make one SHORT now
+    #   python ultimate_shorts_agent.py slideshow  -> make one long SLIDESHOW now
+    #   python ultimate_shorts_agent.py            -> start the local scheduler
+    arg = sys.argv[1].lower() if len(sys.argv) > 1 else ""
+    if arg == "run":
         run_pipeline()
+    elif arg == "slideshow":
+        run_slideshow_pipeline()
     else:
         main()
