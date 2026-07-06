@@ -657,9 +657,10 @@ Return ONLY a JSON object with EXACTLY these keys:
   "visual_prompt": a detailed ENGLISH image prompt showing this beat of the
   story. Characters are cute-but-expressive vegetable/fruit PEOPLE (veggie head +
   human body in Indian clothes) in an Indian village. Style: cinematic 3D
-  Pixar/realistic render, ultra-detailed, {light}, 9:16 vertical composition.
-  Absolutely NO text, letters, numbers, words or logos in the image. Keep the
-  main characters visually consistent across scenes.
+  Pixar/realistic render, ultra-detailed, {light}, WIDE 16:9 landscape
+  (horizontal) cinematic composition. Absolutely NO text, letters, numbers,
+  words or logos in the image. Keep the main characters visually consistent
+  across scenes.
 
 Constraints: Narration in Hindi ~350-420 words. EXACTLY {n} scenes. Output valid
 JSON only.
@@ -921,15 +922,16 @@ def _download_url(url, out_path):
                 f.write(chunk)
 
 
-def _free_image_url(prompt, seed=None):
-    """Public 9:16 image URL from the FREE Pollinations.ai (Flux) generator —
-    no key, no cost. Deterministic per (prompt, seed)."""
+def _free_image_url(prompt, seed=None, width=1080, height=1920):
+    """Public image URL from the FREE Pollinations.ai (Flux) generator — no key,
+    no cost. Deterministic per (prompt, seed). Default 9:16; pass width/height
+    for other aspect ratios (e.g. 1920x1080 for 16:9)."""
     from urllib.parse import quote
     import random
     if seed is None:
         seed = random.randint(1, 9_000_000)
     return ("https://image.pollinations.ai/prompt/" + quote(prompt)
-            + f"?width=1080&height=1920&nologo=true&model=flux&seed={seed}")
+            + f"?width={width}&height={height}&nologo=true&model=flux&seed={seed}")
 
 
 def _warm_free_image(url):
@@ -975,14 +977,15 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
 # --------------------------------------------------------------------------- #
 #  STEP 2c — Scene images (Higgsfield Soul, 3D Pixar style)
 # --------------------------------------------------------------------------- #
-def generate_scene_image(cfg, visual_prompt, out_path):
-    """Render one 9:16 image and download it to out_path. Uses the FREE
-    Pollinations generator when image_provider='pollinations' (default), falling
-    back to Higgsfield Soul on failure."""
+def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920):
+    """Render one image (default 9:16; pass width/height for 16:9 etc.) and
+    download it to out_path. Uses the FREE Pollinations generator when
+    image_provider='pollinations' (default), falling back to Higgsfield Soul."""
     provider = cfg.get("image_provider", "pollinations")
     if provider in ("pollinations", "free"):
         try:
-            _download_url(_free_image_url(visual_prompt), out_path)
+            _download_url(_free_image_url(visual_prompt, width=width,
+                                          height=height), out_path)
             if os.path.exists(out_path) and os.path.getsize(out_path) > 5000:
                 return out_path
             log.warning("Free image looked empty; falling back to Higgsfield.")
@@ -1000,12 +1003,12 @@ def generate_scene_image(cfg, visual_prompt, out_path):
         "Authorization": f"Key {api_key}",
         "Content-Type": "application/json",
     }
+    # Higgsfield Soul only accepts fixed sizes; 2048x1152 for 16:9, else 9:16.
+    soul_size = "2048x1152" if width > height else cfg.get(
+        "higgsfield_image_size", A["image_size"])
     url = _hf_submit_and_wait(
         A, headers, A["text2image_path"],
-        {
-            "prompt": visual_prompt,
-            "width_and_height": cfg.get("higgsfield_image_size", A["image_size"]),
-        },
+        {"prompt": visual_prompt, "width_and_height": soul_size},
         kind="image",
     )
     _download_url(url, out_path)
@@ -1131,7 +1134,7 @@ def render_slideshow_images(cfg, prompts, run_id):
         for attempt, p in enumerate((prompt, safe), 1):
             try:
                 log.info("Slideshow image %d/%d (try %d)...", i, total, attempt)
-                generate_scene_image(cfg, p, out)
+                generate_scene_image(cfg, p, out, width=1920, height=1080)
                 paths.append(out)
                 break
             except Exception as exc:                          # noqa: BLE001
@@ -1151,7 +1154,7 @@ def render_slideshow_images(cfg, prompts, run_id):
 #  STEP 2d — Assemble the video (images + Ken Burns + voiceover + music)
 # --------------------------------------------------------------------------- #
 def assemble_video(image_paths, voice_path, voice_dur, out_path,
-                   music_dir=None, music_volume=None):
+                   music_dir=None, music_volume=None, width=1080, height=1920):
     """
     Build a 9:16 slideshow with ffmpeg (fast, native): each image gets a slow
     Ken Burns PAN (via the crop filter on a pre-upscaled still) for an equal
@@ -1159,10 +1162,11 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path,
     royalty-free background music ducked underneath. `music_dir` / `music_volume`
     override the defaults (e.g. a mood folder + louder music for slideshows).
 
-    Uses ffmpeg directly because per-frame compositing in MoviePy is far too
-    slow for an automated pipeline (~minutes vs ~an hour).
+    Each image is encoded ONE AT A TIME to a temp segment (Ken Burns pan via an
+    animated crop) and the segments are joined with the concat DEMUXER — this is
+    robust, whereas the single-command concat FILTER can crash libx264 on some
+    resolutions. width/height set the aspect (default 9:16; 1920x1080 for 16:9).
     """
-    import subprocess
     import glob
     import random
     import imageio_ffmpeg
@@ -1170,65 +1174,71 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path,
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     mdir = music_dir or MUSIC_DIR
     mvol = MUSIC_VOLUME if music_volume is None else music_volume
-    W, H = 1080, 1920
-    SW, SH = 1296, 2304            # 1.2x upscale -> headroom for the pan
+    W, H = width, height
+    SW, SH = int(W * 1.2), int(H * 1.2)   # 1.2x upscale -> headroom for the pan
     fps = 30
     n = max(1, len(image_paths))
     per = (voice_dur + 1.0) / n    # hold each image a touch past the VO end
+    wd = os.path.dirname(out_path) or "."
+    tmp = []
+
+    log.info("Assembling slideshow (%d scenes, %.1fs each, %dx%d)...",
+             n, per, W, H)
+    segs = []
+    for i, img in enumerate(image_paths):
+        seg = os.path.join(wd, f"_kb_{i}.mp4")
+        tmp.append(seg)
+        prog = (f"min(1\\,t/{per:.3f})" if i % 2 == 0
+                else f"max(0\\,1-t/{per:.3f})")
+        _run_ffmpeg([
+            ffmpeg, "-y", "-loop", "1", "-t", f"{per:.3f}", "-i", img, "-an",
+            "-vf",
+            f"scale={SW}:{SH},crop={W}:{H}:(in_w-out_w)*{prog}:"
+            f"(in_h-out_h)*{prog},setsar=1,fps={fps},format=yuv420p",
+            # -threads 1 keeps libx264's per-thread frame buffers from
+            # multiplying RAM use -> reliable on low-memory (3-4GB) runners.
+            "-threads", "1",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-r", str(fps), seg,
+        ])
+        segs.append(seg)
+
+    listfile = os.path.join(wd, "_kb_list.txt")
+    tmp.append(listfile)
+    with open(listfile, "w", encoding="utf-8") as f:
+        for s in segs:
+            f.write(f"file '{os.path.abspath(s)}'\n")
 
     tracks = (glob.glob(os.path.join(mdir, "*.mp3"))
               + glob.glob(os.path.join(mdir, "*.wav"))
               + glob.glob(os.path.join(mdir, "*.m4a")))
     music = random.choice(tracks) if (tracks and mvol > 0) else None
 
-    cmd = [ffmpeg, "-y"]
-    for img in image_paths:
-        cmd += ["-loop", "1", "-t", f"{per:.3f}", "-i", img]
-    cmd += ["-i", voice_path]
+    cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
+           "-i", voice_path]
     if music:
         cmd += ["-i", music]
         log.info("Background music: %s", os.path.basename(music))
-
-    # Per-scene Ken Burns pan (alternating diagonal) via animated crop.
-    fc = []
-    for i in range(n):
-        if i % 2 == 0:
-            xex, yex = f"(in_w-out_w)*t/{per:.3f}", f"(in_h-out_h)*t/{per:.3f}"
-        else:
-            xex = f"(in_w-out_w)*(1-t/{per:.3f})"
-            yex = f"(in_h-out_h)*(1-t/{per:.3f})"
-        fc.append(
-            f"[{i}:v]scale={SW}:{SH},crop={W}:{H}:{xex}:{yex},"
-            f"setsar=1,fps={fps},format=yuv420p[v{i}]"
-        )
-    fc.append("".join(f"[v{i}]" for i in range(n)) +
-              f"concat=n={n}:v=1:a=0[vout]")
-
-    voice_idx = n
-    if music:
-        fc.append(f"[{n + 1}:a]volume={mvol},aloop=loop=-1:size=2000000000[mus]")
-        fc.append(f"[{voice_idx}:a][mus]amix=inputs=2:duration=first:"
-                  f"dropout_transition=0[aout]")
-        amap = "[aout]"
+        cmd += ["-filter_complex",
+                f"[2:a]volume={mvol},aloop=loop=-1:size=2000000000[mus];"
+                "[1:a][mus]amix=inputs=2:duration=first:dropout_transition=0[aout]",
+                "-map", "0:v", "-map", "[aout]"]
     else:
-        log.warning("No music in %s; exporting with voiceover only.", MUSIC_DIR)
-        amap = f"{voice_idx}:a"
+        log.warning("No music in %s; voiceover only.", mdir)
+        cmd += ["-map", "0:v", "-map", "1:a"]
+    cmd += ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", out_path]
 
-    cmd += [
-        "-filter_complex", ";".join(fc),
-        "-map", "[vout]", "-map", amap,
-        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-        "-r", str(fps), "-c:a", "aac", "-b:a", "192k", out_path,
-    ]
-
-    log.info("Assembling video with ffmpeg (%d scenes, %.1fs each)...", n, per)
-    proc = subprocess.run(cmd, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {proc.stderr[-800:]}")
-    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-        raise RuntimeError("ffmpeg produced an empty video file.")
-    log.info("Final video rendered -> %s", out_path)
+    try:
+        _run_ffmpeg(cmd)
+        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            raise RuntimeError("ffmpeg produced an empty video file.")
+        log.info("Final video rendered -> %s", out_path)
+    finally:
+        for p in tmp:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
     return out_path
 
 
@@ -1582,10 +1592,11 @@ def run_slideshow_pipeline():
         )
         img_paths = render_slideshow_images(cfg, pkg["ScenePrompts"], run_id)
 
-        # 3. 9:16 Ken Burns slideshow + mood music ----------------------- #
+        # 3. 16:9 Ken Burns slideshow + mood music ----------------------- #
         mood_dir = os.path.join(MUSIC_DIR, topic["mood"])
         assemble_video(img_paths, voice_path, vdur, final_video,
-                       music_dir=mood_dir, music_volume=SLIDESHOW_MUSIC_VOLUME)
+                       music_dir=mood_dir, music_volume=SLIDESHOW_MUSIC_VOLUME,
+                       width=1920, height=1080)
 
         # 4. upload + notify --------------------------------------------- #
         url = upload_to_youtube(cfg, final_video, pkg)
