@@ -1,0 +1,9 @@
+# Whitelist approach: ignore EVERYTHING, then allow only safe source files.
+# This guarantees secrets (config.json, token.json, client_secret.json) and all
+# junk (work/, logs/, assets/, .github/ stray copies, *.bat, *.ps1, etc.) are
+# NEVER committed or pushed to GitHub.
+*
+!.gitignore
+!ultimate_shorts_agent.py
+!requirements.txt
+!topic_bank.json

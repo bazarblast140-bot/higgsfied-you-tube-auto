@@ -1049,14 +1049,16 @@ def _run_ffmpeg(cmd):
 def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path):
     """
     Stitch ANIMATED scene clips into the final 9:16 video. Each clip is processed
-    ONE AT A TIME (memory-safe): normalized to 1080x1920, boomeranged (forward +
-    reverse) for seamless motion, then looped to fill its equal slice of the
-    voiceover. The segments are concatenated and the Hindi voiceover is laid on
-    top with optional background music ducked underneath.
+    ONE AT A TIME (memory-safe): normalized to 1080x1920 and slowed down (FORWARD
+    only — no reverse/boomerang) to fill its equal slice of the voiceover, so the
+    motion always plays forward and never runs backwards. The segments are
+    concatenated and the Hindi voiceover is laid on top with optional background
+    music ducked underneath.
     """
     import glob
     import random
     import imageio_ffmpeg
+    from moviepy import VideoFileClip
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     W, H, fps = 1080, 1920, 30
@@ -1068,23 +1070,24 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path):
     log.info("Stitching %d animated clips (%.1fs each)...", n, per)
     segs = []
     for i, clip in enumerate(clip_paths):
-        boom = os.path.join(wd, f"_boom_{i}.mp4")
         seg = os.path.join(wd, f"_seg_{i}.mp4")
-        tmp += [boom, seg]
-        # 1) normalize + boomerang (one clip in memory at a time -> safe)
+        tmp.append(seg)
+        # Slow the clip (forward only) so it lasts `per` seconds — never reverse.
+        try:
+            _v = VideoFileClip(clip)
+            dur = float(_v.duration)
+            _v.close()
+        except Exception:                                     # noqa: BLE001
+            dur = 5.0
+        factor = max(1.0, per / max(0.1, dur))                # >=1 -> slow, never speed up
         _run_ffmpeg([
             ffmpeg, "-y", "-i", clip, "-an", "-filter_complex",
             f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
-            f"crop={W}:{H},setsar=1,fps={fps},format=yuv420p,split=2[a][b];"
-            f"[b]reverse[r];[a][r]concat=n=2:v=1[v]",
-            "-map", "[v]", "-c:v", "libx264", "-preset", "veryfast",
-            "-pix_fmt", "yuv420p", boom,
-        ])
-        # 2) loop the boomerang from disk to fill `per` (low memory)
-        _run_ffmpeg([
-            ffmpeg, "-y", "-stream_loop", "-1", "-i", boom, "-t", f"{per:.3f}",
-            "-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt",
-            "yuv420p", "-r", str(fps), seg,
+            f"crop={W}:{H},setsar=1,fps={fps},format=yuv420p,"
+            f"setpts={factor:.4f}*PTS[v]",
+            "-map", "[v]", "-t", f"{per:.3f}",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-r", str(fps), seg,
         ])
         segs.append(seg)
 
