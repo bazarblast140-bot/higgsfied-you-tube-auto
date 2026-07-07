@@ -141,6 +141,21 @@ STYLE_FLAVORS = [
     "rainy-day cozy mood", "snowy winter wonderland tones",
 ]
 
+# Different HOOK openings so every Short starts differently (NOT always "रुको").
+# The hook agent picks one at random each video for variety.
+HOOK_STYLES = [
+    "a surprising question that makes the viewer curious",
+    "a shocking or unbelievable one-line fact/claim",
+    "a 'क्या तुम जानते हो...?' style teaser",
+    "a mini cliffhanger about what happens next",
+    "a playful challenge or dare to keep watching",
+    "an emotional/heart-tugging opening line",
+    "a funny or silly attention-grabbing line",
+    "a 'सोचो ज़रा...' style thought-provoker",
+    "directly addressing the viewer ('तुम्हें यकीन नहीं होगा...')",
+    "a countdown/teaser hinting at a twist coming",
+]
+
 # SEO for the sabzi/veggie slideshow long videos.
 SLIDESHOW_HASHTAGS = [
     "#Shorts", "#sabjikahani", "#sabzicartoon", "#hindikahani", "#kahani",
@@ -489,11 +504,14 @@ Return ONLY a JSON object with EXACTLY these keys:
     - "image_prompt": a detailed ENGLISH image prompt. It MUST start with
       "3D Pixar-style animation," include the FULL consistent character
       description(s), describe this scene, and end with
-      "vertical 9:16 composition, wholesome". Make it PREMIUM and characterful:
-      award-winning high-end Pixar/DreamWorks-quality 3D render, ultra-detailed
-      hyper-realistic fur/skin/fabric textures, expressive charismatic faces,
-      cinematic studio lighting, soft depth of field, rich vivid colours, 8K,
-      like a polished animated movie poster. NO text/letters/words/numbers/logos
+      "vertical 9:16 composition, wholesome". Make it PREMIUM, LIFELIKE and
+      characterful: award-winning high-end Pixar/DreamWorks-quality 3D render,
+      photorealistic 3D with subsurface-scattering skin, physically-based
+      materials, ultra-detailed hyper-realistic fur/skin/fabric textures,
+      volumetric cinematic lighting, ray-traced reflections, soft depth of
+      field, expressive charismatic faces, rich vivid colours, rendered in
+      Unreal Engine 5 / Octane, 8K film-quality frame like a still from a
+      big-studio animated feature. NO text/letters/words/numbers/logos
       anywhere in the image.
     - "video_prompt": a detailed ENGLISH motion prompt describing what the
       characters DO in this scene (gestures, actions, natural blinking, gentle
@@ -574,9 +592,11 @@ def generate_hook(cfg, topic):
     the pipeline never breaks over a missing hook).
     """
     try:
+        import random
         import anthropic
         client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
         model = cfg.get("anthropic_model", "claude-opus-4-8")
+        style = random.choice(HOOK_STYLES)
         system = (
             "You write viral YouTube Shorts HOOKS in Hindi for a children's "
             "cartoon story channel. Reply with ONLY the hook line, nothing else."
@@ -584,9 +604,12 @@ def generate_hook(cfg, topic):
         user = (
             'Write ONE super-catchy HINDI (Devanagari) opening HOOK line for a '
             f'kids cartoon story about: "{topic}".\n'
+            f"HOOK STYLE for THIS video: {style}.\n"
             "Rules: max ~12 words, spoken in about 3 seconds, instant curiosity "
-            "or surprise so viewers don't scroll away (a question, a \"रुको!\", "
-            "a teaser). Simple Hindi a child enjoys. Reply with ONLY the hook."
+            "or surprise so viewers don't scroll away. Simple Hindi a child "
+            "enjoys. IMPORTANT: be ORIGINAL and VARY the opening every time — "
+            'do NOT start with "रुको" and avoid repeating common opener words. '
+            "Reply with ONLY the hook."
         )
         resp = client.messages.create(
             model=model, max_tokens=200, system=system,
@@ -1151,6 +1174,230 @@ def render_slideshow_images(cfg, prompts, run_id):
 
 
 # --------------------------------------------------------------------------- #
+#  STEP 2e — Real FREE stock footage (Pexels / Pixabay) -> scene clips
+#  (OpenMontage-style: real motion clips instead of still AI images; keeps
+#   viewers watching = better retention. NO paid service, NO Higgsfield.)
+# --------------------------------------------------------------------------- #
+def _stock_prompt_text(item):
+    """A scene item is either a dict (Shorts: image_prompt) or a plain prompt
+    string (slideshow). Return its descriptive text."""
+    if isinstance(item, dict):
+        return item.get("image_prompt", "") or item.get("video_prompt", "")
+    return str(item)
+
+
+def _naive_stock_query(text):
+    """Cheap keyword fallback when the LLM query step is unavailable: keep the
+    first few concrete words, drop style boilerplate."""
+    skip = {"a", "an", "the", "of", "in", "on", "at", "with", "and", "to",
+            "3d", "pixar", "disney", "dreamworks", "cartoon", "style",
+            "cinematic", "highly", "detailed", "ultra", "scene", "illustration",
+            "render", "rendered", "4k", "8k", "hd", "photo", "photorealistic",
+            "wholesome", "family", "friendly", "cute", "stylised", "stylized"}
+    words = re.findall(r"[A-Za-z]+", text)
+    keep = [w for w in words if len(w) > 1 and w.lower() not in skip][:3]
+    return " ".join(keep) or "nature background"
+
+
+def generate_stock_queries(cfg, prompts):
+    """Convert each scene's long visual prompt into a SHORT (2-4 word) English
+    stock-footage search query, via one cheap batched Claude call. Falls back to
+    naive keywords if the LLM is unavailable. Returns a list the SAME length as
+    `prompts` (order preserved)."""
+    texts = [_stock_prompt_text(p) for p in prompts]
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
+        model = cfg.get("anthropic_model", "claude-opus-4-8")
+        numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
+        system = (
+            "You turn scene descriptions into SHORT English stock-video search "
+            "queries. For each numbered scene output 2-4 plain keywords naming "
+            "the concrete VISIBLE subject/action only (no style words, no "
+            "punctuation, no camera terms). Return ONLY a JSON object of the "
+            'form {"queries": ["kw kw", ...]} with one string per scene, in the '
+            "same order and count."
+        )
+        msg = client.messages.create(
+            model=model, max_tokens=1200, system=system,
+            messages=[{"role": "user", "content": numbered}],
+        )
+        raw = next((b.text for b in msg.content if b.type == "text"), "")
+        arr = json.loads(_extract_json(raw)).get("queries", [])
+        if isinstance(arr, list) and len(arr) == len(texts):
+            return [str(q).strip() or _naive_stock_query(t)
+                    for q, t in zip(arr, texts)]
+        log.warning("Stock-query JSON malformed (%d vs %d); naive keywords.",
+                    len(arr) if isinstance(arr, list) else -1, len(texts))
+    except Exception as exc:                                  # noqa: BLE001
+        log.warning("Stock-query LLM step failed (%s); naive keywords.",
+                    str(exc)[:120])
+    return [_naive_stock_query(t) for t in texts]
+
+
+def _pick_pexels_file(videos, orientation):
+    """Choose one Pexels video-file URL: prefer the requested orientation and a
+    short-edge <=1920 (keeps files small + low-RAM). Falls back to any capped
+    file if orientation has no match."""
+    best, best_score = None, -1
+    for v in videos:
+        for f in v.get("video_files", []):
+            w, h, link = f.get("width") or 0, f.get("height") or 0, f.get("link")
+            if not (link and w and h) or max(w, h) > 1920:
+                continue
+            is_portrait = h >= w
+            if (orientation == "portrait") != is_portrait:
+                continue
+            score = min(w, h)                     # sharper short-edge wins
+            if score > best_score:
+                best, best_score = link, score
+    if best is None:                              # orientation had no match
+        for v in videos:
+            for f in v.get("video_files", []):
+                w, h, link = f.get("width") or 0, f.get("height") or 0, f.get("link")
+                if link and w and h and max(w, h) <= 1920:
+                    return link
+    return best
+
+
+def _pick_pixabay_file(hits):
+    """Choose one Pixabay video URL (prefer medium quality)."""
+    for h in hits:
+        vids = h.get("videos", {})
+        for q in ("medium", "large", "small", "tiny"):
+            f = vids.get(q) or {}
+            if f.get("url"):
+                return f["url"]
+    return None
+
+
+def fetch_stock_clip(cfg, query, out_path, orientation="portrait"):
+    """Download ONE free real stock video clip matching `query`. Tries Pexels
+    (needs a FREE pexels_api_key), then Pixabay (FREE pixabay_api_key). Returns
+    out_path on success, else None. No paid service, no card required."""
+    import requests
+
+    pk = cfg.get("pexels_api_key", "").strip()
+    if pk:
+        try:
+            r = requests.get(
+                "https://api.pexels.com/videos/search",
+                headers={"Authorization": pk},
+                params={"query": query, "orientation": orientation,
+                        "per_page": 8, "size": "medium"},
+                timeout=60,
+            )
+            if r.status_code == 200:
+                url = _pick_pexels_file(r.json().get("videos", []), orientation)
+                if url:
+                    _download_url(url, out_path)
+                    if os.path.exists(out_path) and os.path.getsize(out_path) > 20000:
+                        return out_path
+            else:
+                log.warning("Pexels HTTP %s for '%s'.", r.status_code, query)
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("Pexels failed for '%s' (%s).", query, str(exc)[:120])
+
+    xk = cfg.get("pixabay_api_key", "").strip()
+    if xk:
+        try:
+            r = requests.get(
+                "https://pixabay.com/api/videos/",
+                params={"key": xk, "q": query, "per_page": 8,
+                        "safesearch": "true"},
+                timeout=60,
+            )
+            if r.status_code == 200:
+                url = _pick_pixabay_file(r.json().get("hits", []))
+                if url:
+                    _download_url(url, out_path)
+                    if os.path.exists(out_path) and os.path.getsize(out_path) > 20000:
+                        return out_path
+            else:
+                log.warning("Pixabay HTTP %s for '%s'.", r.status_code, query)
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("Pixabay failed for '%s' (%s).", query, str(exc)[:120])
+
+    return None
+
+
+def _still_to_clip(img_path, out_path, dur, width, height):
+    """Turn a still image into a short Ken-Burns mp4 clip so a Pollinations
+    still fallback can be stitched by the same clip assembler as real footage.
+    Reuses the exact crop-pan approach from assemble_video (low-RAM, threads=1)."""
+    import imageio_ffmpeg
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    W, H = width, height
+    SW, SH = int(W * 1.2), int(H * 1.2)          # 1.2x headroom for the pan
+    fps = 30
+    prog = f"min(1\\,t/{dur:.3f})"
+    _run_ffmpeg([
+        ffmpeg, "-y", "-loop", "1", "-t", f"{dur:.3f}", "-i", img_path, "-an",
+        "-vf",
+        f"scale={SW}:{SH},crop={W}:{H}:(in_w-out_w)*{prog}:"
+        f"(in_h-out_h)*{prog},setsar=1,fps={fps},format=yuv420p",
+        "-threads", "1", "-c:v", "libx264", "-preset", "veryfast",
+        "-pix_fmt", "yuv420p", "-r", str(fps), out_path,
+    ])
+    return out_path
+
+
+def render_stock_clips(cfg, prompts, run_id, width=1080, height=1920):
+    """For each scene: download a FREE real stock video clip (Pexels/Pixabay);
+    if none is found, fall back to a FREE Pollinations still rendered as a short
+    Ken-Burns clip. Returns a list of mp4 paths (ALL clips) so
+    assemble_animated_video can stitch them uniformly. Higgsfield is NEVER hit."""
+    import time as _time
+
+    orientation = "portrait" if height >= width else "landscape"
+    queries = generate_stock_queries(cfg, prompts)
+    paths, total = [], len(prompts)
+
+    for i, (item, query) in enumerate(zip(prompts, queries), 1):
+        out = os.path.join(WORK_DIR, f"stock_{run_id}_{i}.mp4")
+        log.info("Stock clip %d/%d: '%s' ...", i, total, query)
+        got = None
+        try:
+            got = fetch_stock_clip(cfg, query, out, orientation)
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("Stock fetch %d failed (%s).", i, str(exc)[:120])
+
+        if got:
+            paths.append(got)
+        else:
+            # Fallback: FREE Pollinations still -> Ken Burns clip (no paid gen).
+            # Use a REALISTIC photographic prompt (built from the search query)
+            # so the fallback matches the real-footage look, not a cartoon.
+            still = os.path.join(WORK_DIR, f"stockimg_{run_id}_{i}.png")
+            base = query or _stock_prompt_text(item)
+            prompt = (f"realistic cinematic photograph, {base}, natural "
+                      "lighting, high detail, lifelike, no cartoon, no text")
+            try:
+                log.info("  no stock hit; Pollinations still fallback %d.", i)
+                generate_scene_image(cfg, prompt, still,
+                                     width=width, height=height)
+                _still_to_clip(still, out, 5.0, width, height)
+                paths.append(out)
+            except Exception as exc:                          # noqa: BLE001
+                log.warning("Fallback still %d failed (%s); skipping scene.",
+                            i, str(exc)[:120])
+            finally:
+                if os.path.exists(still):
+                    try:
+                        os.remove(still)
+                    except OSError:
+                        pass
+
+        if i < total:
+            _time.sleep(FREE_IMAGE_DELAY_S)       # be gentle on free services
+
+    if not paths:
+        raise RuntimeError("All stock clips failed (no footage, no fallback).")
+    log.info("Stock footage ready: %d/%d clips.", len(paths), total)
+    return paths
+
+
+# --------------------------------------------------------------------------- #
 #  STEP 2d — Assemble the video (images + Ken Burns + voiceover + music)
 # --------------------------------------------------------------------------- #
 def assemble_video(image_paths, voice_path, voice_dur, out_path,
@@ -1251,14 +1498,19 @@ def _run_ffmpeg(cmd):
         raise RuntimeError(f"ffmpeg failed: {proc.stderr[-700:]}")
 
 
-def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path):
+def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path,
+                            width=1080, height=1920,
+                            music_dir=None, music_volume=None):
     """
-    Stitch ANIMATED scene clips into the final 9:16 video. Each clip is processed
-    ONE AT A TIME (memory-safe): normalized to 1080x1920 and slowed down (FORWARD
-    only — no reverse/boomerang) to fill its equal slice of the voiceover, so the
-    motion always plays forward and never runs backwards. The segments are
-    concatenated and the Hindi voiceover is laid on top with optional background
-    music ducked underneath.
+    Stitch scene VIDEO clips (Higgsfield DoP animation OR free stock footage)
+    into the final video. Each clip is processed ONE AT A TIME (memory-safe):
+    normalized to width x height and slowed down (FORWARD only — no
+    reverse/boomerang) to fill its equal slice of the voiceover, so the motion
+    always plays forward and never runs backwards. The segments are concatenated
+    and the Hindi voiceover is laid on top with optional background music ducked
+    underneath. width/height set the aspect (default 9:16; 1920x1080 for 16:9);
+    music_dir/music_volume override the defaults (e.g. a mood folder for
+    slideshows).
     """
     import glob
     import random
@@ -1266,7 +1518,9 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path):
     from moviepy import VideoFileClip
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    W, H, fps = 1080, 1920, 30
+    mdir = music_dir or MUSIC_DIR
+    mvol = MUSIC_VOLUME if music_volume is None else music_volume
+    W, H, fps = width, height, 30
     n = max(1, len(clip_paths))
     per = (voice_dur + 1.0) / n
     wd = os.path.dirname(out_path) or "."
@@ -1303,10 +1557,10 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path):
         for s in segs:
             f.write(f"file '{os.path.abspath(s)}'\n")
 
-    tracks = (glob.glob(os.path.join(MUSIC_DIR, "*.mp3"))
-              + glob.glob(os.path.join(MUSIC_DIR, "*.wav"))
-              + glob.glob(os.path.join(MUSIC_DIR, "*.m4a")))
-    music = random.choice(tracks) if (tracks and MUSIC_VOLUME > 0) else None
+    tracks = (glob.glob(os.path.join(mdir, "*.mp3"))
+              + glob.glob(os.path.join(mdir, "*.wav"))
+              + glob.glob(os.path.join(mdir, "*.m4a")))
+    music = random.choice(tracks) if (tracks and mvol > 0) else None
 
     cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
            "-i", voice_path]
@@ -1314,11 +1568,11 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path):
         cmd += ["-i", music]
         log.info("Background music: %s", os.path.basename(music))
         cmd += ["-filter_complex",
-                f"[2:a]volume={MUSIC_VOLUME},aloop=loop=-1:size=2000000000[mus];"
+                f"[2:a]volume={mvol},aloop=loop=-1:size=2000000000[mus];"
                 "[1:a][mus]amix=inputs=2:duration=first:dropout_transition=0[aout]",
                 "-map", "0:v", "-map", "[aout]"]
     else:
-        log.warning("No music in %s; voiceover only.", MUSIC_DIR)
+        log.warning("No music in %s; voiceover only.", mdir)
         cmd += ["-map", "0:v", "-map", "1:a"]
     cmd += ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", out_path]
 
@@ -1503,6 +1757,9 @@ def run_pipeline():
     try:
         ensure_dirs()
         cfg = load_config()
+        # visual_mode: "stock_video" (FREE real footage, 0 credits) |
+        #              "ai_image" (legacy: Higgsfield DoP if animate, else stills)
+        visual_mode = cfg.get("visual_mode", "ai_image")
         animate = bool(cfg.get("animate_scenes", True))
 
         # 1. Topic + story + hook ---------------------------------------- #
@@ -1515,16 +1772,30 @@ def run_pipeline():
                 first = pkg["Scenes"][0].get("narration_hi", "")
                 pkg["Scenes"][0]["narration_hi"] = f"{hook} {first}".strip()
 
-        # 2. Hindi voiceover + scene assets (animated clips or stills) --- #
+        # 2. Hindi voiceover --------------------------------------------- #
         _, voice_dur = synthesize_hindi_voice(cfg, pkg["Narration"], voice_path)
-        scene_paths = render_scene_assets(cfg, pkg["Scenes"], run_id, animate)
 
-        # 3. Assemble the 40-50s video ----------------------------------- #
-        if animate:
+        # 3. Scene visuals + assemble the 40-50s video ------------------- #
+        # Subtle background music (auto-activates once no-copyright tracks are
+        # added to assets/music; voiceover-only until then).
+        smv = cfg.get("shorts_music_volume", 0.08)
+        if visual_mode == "stock_video":
+            # FREE real stock footage (Pexels/Pixabay) -> motion clips.
+            # Higgsfield NEVER hit -> 0 credits. Motion boosts retention.
+            scene_paths = render_stock_clips(cfg, pkg["Scenes"], run_id,
+                                             width=1080, height=1920)
             assemble_animated_video(scene_paths, voice_path, voice_dur,
-                                    final_video)
+                                    final_video, music_volume=smv)
+        elif animate:
+            # Higgsfield DoP animation (free image -> DoP motion). Main path.
+            scene_paths = render_scene_assets(cfg, pkg["Scenes"], run_id, True)
+            assemble_animated_video(scene_paths, voice_path, voice_dur,
+                                    final_video, music_volume=smv)
         else:
-            assemble_video(scene_paths, voice_path, voice_dur, final_video)
+            # Legacy FREE Pollinations stills + Ken Burns slideshow.
+            scene_paths = render_scene_assets(cfg, pkg["Scenes"], run_id, False)
+            assemble_video(scene_paths, voice_path, voice_dur, final_video,
+                           music_volume=smv)
 
         # 4. Upload ------------------------------------------------------ #
         url = upload_to_youtube(cfg, final_video, pkg)
@@ -1578,6 +1849,7 @@ def run_slideshow_pipeline():
     try:
         ensure_dirs()
         cfg = load_config()
+        visual_mode = cfg.get("visual_mode", "ai_image")
 
         # 1. sabzi topic + ~3 min story ---------------------------------- #
         topic = pick_slideshow_topic(cfg)
@@ -1590,13 +1862,22 @@ def run_slideshow_pipeline():
             _tts_rate_override=cfg.get("slideshow_rate", SLIDESHOW_RATE),
             _tts_pitch_override=cfg.get("slideshow_pitch", SLIDESHOW_PITCH),
         )
-        img_paths = render_slideshow_images(cfg, pkg["ScenePrompts"], run_id)
-
-        # 3. 16:9 Ken Burns slideshow + mood music ----------------------- #
+        # 3. 16:9 video + mood music ------------------------------------- #
         mood_dir = os.path.join(MUSIC_DIR, topic["mood"])
-        assemble_video(img_paths, voice_path, vdur, final_video,
-                       music_dir=mood_dir, music_volume=SLIDESHOW_MUSIC_VOLUME,
-                       width=1920, height=1080)
+        if visual_mode == "stock_video":
+            # FREE real stock footage (Pexels/Pixabay) -> 16:9 motion clips.
+            img_paths = render_stock_clips(cfg, pkg["ScenePrompts"], run_id,
+                                           width=1920, height=1080)
+            assemble_animated_video(img_paths, voice_path, vdur, final_video,
+                                    width=1920, height=1080, music_dir=mood_dir,
+                                    music_volume=SLIDESHOW_MUSIC_VOLUME)
+        else:
+            # Legacy FREE Pollinations stills + Ken Burns slideshow.
+            img_paths = render_slideshow_images(cfg, pkg["ScenePrompts"], run_id)
+            assemble_video(img_paths, voice_path, vdur, final_video,
+                           music_dir=mood_dir,
+                           music_volume=SLIDESHOW_MUSIC_VOLUME,
+                           width=1920, height=1080)
 
         # 4. upload + notify --------------------------------------------- #
         url = upload_to_youtube(cfg, final_video, pkg)
