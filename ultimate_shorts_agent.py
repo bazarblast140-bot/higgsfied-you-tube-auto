@@ -21,6 +21,7 @@ INSTALL
 --------------------------------------------------------------------------------
     pip install anthropic moviepy edge-tts google-api-python-client \
                 google-auth-oauthlib google-auth-httplib2 schedule requests pytz
+                google-auth-oauthlib google-auth-httplib2 schedule requests pytz yt-dlp
 
 --------------------------------------------------------------------------------
 FOLDER LAYOUT (auto-created on first run)
@@ -107,7 +108,7 @@ NUM_SCENES   = 6                       # scenes per story (~40-50s total)
 TTS_VOICE    = "hi-IN-SwaraNeural"     # cute girl (or hi-IN-MadhurNeural for boy)
 TTS_RATE     = "+18%"                   # faster + energetic (grabs attention)
 TTS_PITCH    = "+22Hz"                  # higher = cuter, child-like
-MUSIC_VOLUME = 0.0                      # background music level for SHORTS (0.0 = OFF)
+MUSIC_VOLUME = 0.08                     # background music level for SHORTS (0.08 = subtle)
 
 # Slideshow long-video settings (sabzi/veggie emotional + horror stories).
 NUM_SLIDESHOW_SCENES = 24               # still images across a ~3 min video
@@ -1620,6 +1621,18 @@ def get_youtube_service():
                 creds = None
 
         if not refreshed:
+            # A browser consent flow can NEVER work on a headless CI runner —
+            # fail with an actionable message instead of a confusing
+            # "client_secret.json not found".
+            if os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"):
+                raise RuntimeError(
+                    "YouTube token expired/revoked and cannot be refreshed on a "
+                    "headless runner. FIX: (1) in Google Cloud Console set the "
+                    "OAuth consent screen publishing status to 'In production' "
+                    "(in 'Testing' mode refresh tokens die after 7 days), "
+                    "(2) run `python ultimate_shorts_agent.py reauth` locally, "
+                    "(3) paste the new token.json into the TOKEN_JSON secret."
+                )
             if not os.path.exists(CLIENT_SECRET):
                 raise FileNotFoundError(
                     f"client_secret.json not found at {CLIENT_SECRET}")
@@ -1632,6 +1645,33 @@ def get_youtube_service():
             f.write(creds.to_json())
 
     return build("youtube", "v3", credentials=creds)
+
+
+def reauth_youtube():
+    """Re-run the Google consent flow LOCALLY (a browser opens) and rewrite
+    token.json. Use this when the cloud run fails with 'token expired/revoked'.
+    Afterwards paste the whole token.json into the TOKEN_JSON GitHub secret.
+
+    TIP: first set the OAuth consent screen to 'In production' in Google Cloud
+    Console — while it is in 'Testing', Google expires refresh tokens after
+    7 days, so the bot breaks every week.
+    """
+    ensure_dirs()
+    if os.path.exists(TOKEN_PATH):
+        backup = TOKEN_PATH + ".old"
+        try:
+            shutil.copyfile(TOKEN_PATH, backup)
+            os.remove(TOKEN_PATH)
+            log.info("Stale token backed up -> %s", backup)
+        except OSError as exc:                                # noqa: BLE001
+            log.warning("Could not back up the stale token (%s).", exc)
+
+    get_youtube_service()        # opens the browser, writes a fresh token.json
+    log.info("=" * 70)
+    log.info("NEW TOKEN WRITTEN -> %s", TOKEN_PATH)
+    log.info("Now copy the ENTIRE contents of token.json into the GitHub "
+             "secret named TOKEN_JSON (Settings -> Secrets -> Actions).")
+    log.info("=" * 70)
 
 
 def upload_to_youtube(cfg, video_path, seo):
@@ -1698,6 +1738,42 @@ def _set_thumbnail(youtube, video_id, video_path):
     except Exception as exc:                                   # noqa: BLE001
         log.warning("Thumbnail skipped (%s). Verify the channel (phone) to "
                     "enable custom thumbnails.", exc)
+
+
+# --------------------------------------------------------------------------- #
+#  (NEW) YouTube Downloader
+# --------------------------------------------------------------------------- #
+def download_from_youtube(url, out_dir=WORK_DIR):
+    """
+    Download a video from a YouTube URL into the specified directory.
+    Uses yt-dlp to fetch the best quality mp4.
+    Returns the full path to the downloaded file, or None on failure.
+
+    NOTE: Downloading and re-using copyrighted content without permission may
+    violate YouTube's Terms of Service and copyright law. Use responsibly.
+    """
+    try:
+        import yt_dlp
+        log.info("Downloading YouTube video from: %s", url)
+
+        # yt-dlp options: download best mp4 format into the work directory
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': os.path.join(out_dir, '%(title)s.%(ext)s'),
+            'quiet': True,
+            'no_warnings': True,
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            filename = ydl.prepare_filename(info)
+            ydl.download([url])
+
+        log.info("YouTube video downloaded successfully -> %s", filename)
+        return filename
+    except Exception as exc:
+        log.error("Failed to download YouTube video: %s", exc)
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -1961,11 +2037,14 @@ if __name__ == "__main__":
     # CLI helpers:
     #   python ultimate_shorts_agent.py run        -> make one SHORT now
     #   python ultimate_shorts_agent.py slideshow  -> make one long SLIDESHOW now
+    #   python ultimate_shorts_agent.py reauth     -> refresh the YouTube token
     #   python ultimate_shorts_agent.py            -> start the local scheduler
     arg = sys.argv[1].lower() if len(sys.argv) > 1 else ""
     if arg == "run":
         run_pipeline()
     elif arg == "slideshow":
         run_slideshow_pipeline()
+    elif arg == "reauth":
+        reauth_youtube()
     else:
         main()
