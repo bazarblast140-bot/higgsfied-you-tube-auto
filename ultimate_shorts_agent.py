@@ -1505,9 +1505,10 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path,
     """
     Stitch scene VIDEO clips (Higgsfield DoP animation OR free stock footage)
     into the final video. Each clip is processed ONE AT A TIME (memory-safe):
-    normalized to width x height and slowed down (FORWARD only — no
-    reverse/boomerang) to fill its equal slice of the voiceover, so the motion
-    always plays forward and never runs backwards. The segments are concatenated
+    normalized to width x height and PLAYED AT REAL SPEED once, then it holds
+    its last frame to fill its equal slice of the voiceover (no slow-motion, no
+    reverse, no loop-jump), so the motion looks natural and smooth. The segments
+    are concatenated
     and the Hindi voiceover is laid on top with optional background music ducked
     underneath. width/height set the aspect (default 9:16; 1920x1080 for 16:9);
     music_dir/music_volume override the defaults (e.g. a mood folder for
@@ -1532,20 +1533,21 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path,
     for i, clip in enumerate(clip_paths):
         seg = os.path.join(wd, f"_seg_{i}.mp4")
         tmp.append(seg)
-        # Slow the clip (forward only) so it lasts `per` seconds — never reverse.
-        try:
-            _v = VideoFileClip(clip)
-            dur = float(_v.duration)
-            _v.close()
-        except Exception:                                     # noqa: BLE001
-            dur = 5.0
-        factor = max(1.0, per / max(0.1, dur))                # >=1 -> slow, never speed up
+        # Play the clip once at REAL speed, then FREEZE the last frame to fill
+        # `per` seconds (no setpts slow-motion, no reverse, no loop-jump).
+        # tpad clones the final frame for a long time; -t trims the segment to
+        # exactly `per`, so the motion runs real-time and then holds still. A
+        # clip longer than `per` is simply trimmed by -t (no freeze visible).
+        # setpts=N/FRAME_RATE/TB rebuilds continuous timestamps for a clean join.
         _run_ffmpeg([
-            ffmpeg, "-y", "-i", clip, "-an", "-filter_complex",
+            ffmpeg, "-y", "-i", clip, "-an",
+            "-t", f"{per:.3f}",
+            "-filter_complex",
             f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
             f"crop={W}:{H},setsar=1,fps={fps},format=yuv420p,"
-            f"setpts={factor:.4f}*PTS[v]",
-            "-map", "[v]", "-t", f"{per:.3f}",
+            f"tpad=stop_mode=clone:stop_duration=3600,"
+            f"setpts=N/FRAME_RATE/TB[v]",
+            "-map", "[v]",
             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
             "-r", str(fps), seg,
         ])
