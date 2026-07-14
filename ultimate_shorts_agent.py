@@ -77,6 +77,7 @@ ARCHIVE_DIR   = os.path.join(BASE_DIR, "archive")
 WORK_DIR      = os.path.join(BASE_DIR, "work")          # transient render space
 LOG_DIR       = os.path.join(BASE_DIR, "logs")
 TOPIC_BANK    = os.path.join(BASE_DIR, "topic_bank.json")   # kids-story topics
+NEWS_TOPIC_BANK = os.path.join(BASE_DIR, "news_topic_bank.json") # news topics
 SLIDESHOW_BANK = os.path.join(BASE_DIR, "slideshow_topics.json")  # sabzi drama/horror
 
 YOUTUBE_UPLOAD_SCOPE = ["https://www.googleapis.com/auth/youtube.upload"]
@@ -115,7 +116,7 @@ NUM_SLIDESHOW_SCENES = 24               # still images across a ~3 min video
 SLIDESHOW_VOICE      = "hi-IN-MadhurNeural"   # mature storyteller voice
 SLIDESHOW_RATE       = "+0%"            # natural storytelling pace
 SLIDESHOW_PITCH      = "+0Hz"
-SLIDESHOW_MUSIC_VOLUME = 0.18           # emotional/scary music under the voiceover
+SLIDESHOW_MUSIC_VOLUME = 0.09           # under the voiceover; 0.18 drowned the narration
 FREE_IMAGE_DELAY_S   = 3                # gap between free-image calls (avoid rate-limit)
 
 # Reach / SEO — niche hashtags appended to every description, and base keywords
@@ -130,6 +131,20 @@ SEO_BASE_TAGS = [
     "kids story hindi", "cartoon kahani", "hindi moral stories",
     "bedtime stories hindi", "hindi stories for kids", "shorts",
 ]
+
+# SEO for the faceless news shorts.
+NEWS_HASHTAGS = [
+    "#NewsShorts", "#HindiNews", "#BreakingNews", "#CurrentAffairs", "#DailyNews",
+    "#TechNews", "#ScienceNews", "#HealthUpdate", "#IndiaNews", "#GlobalNews",
+    "#Samachar", "#LatestNews",
+]
+NEWS_BASE_TAGS = [
+    "hindi news", "breaking news", "current affairs", "daily news", "samachar",
+    "latest news", "tech news hindi", "science news hindi", "health news hindi",
+    "india news", "global news", "shorts news", "aaj ki khabar",
+]
+
+
 
 # Visual freshness — a random mood/palette per video keeps the 3D-cartoon brand
 # consistent while making each upload look distinct (helps avoid YouTube's
@@ -299,6 +314,39 @@ def pick_topic(cfg):
     except Exception as exc:                            # noqa: BLE001
         log.warning("Topic bank read failed (%s); using trend/fallback.", exc)
         return fetch_trending_topic(cfg)
+
+
+def pick_news_topic(cfg):
+    """
+    Pick an UNUSED news topic from news_topic_bank.json, mark it used, and
+    return {"topic","source","category"}. Resets the used list once every topic
+    has been used. Falls back to a live trend / evergreen topic if the bank is
+    missing or unreadable.
+    """
+    import random
+    try:
+        with open(NEWS_TOPIC_BANK, "r", encoding="utf-8") as f:
+            bank = json.load(f)
+        cats = bank.get("categories", {})
+        used = set(bank.get("used_topics", []))
+        all_topics = [(c, t) for c, lst in cats.items() for t in lst]
+        pool = [(c, t) for c, t in all_topics if t not in used]
+        if not pool:                                   # everything used -> reset
+            log.info("News topic bank exhausted; resetting used_topics.")
+            used = set()
+            pool = all_topics
+        if not pool:
+            raise ValueError("news_topic_bank.json has no topics")
+        cat, topic = random.choice(pool)
+        used.add(topic)
+        bank["used_topics"] = sorted(used)
+        with open(NEWS_TOPIC_BANK, "w", encoding="utf-8") as f:
+            json.dump(bank, f, ensure_ascii=False, indent=2)
+        log.info("News topic (%s): %s", cat, topic)
+        return {"topic": topic, "source": "news-topic-bank", "category": cat}
+    except Exception as exc:                            # noqa: BLE001
+        log.warning("News topic bank read failed (%s); using trend/fallback.", exc)
+        return fetch_trending_topic(cfg) # Fallback to general trending if news bank fails
 
 
 def pick_slideshow_topic(cfg):
@@ -625,6 +673,86 @@ def generate_hook(cfg, topic):
         return ""
 
 
+def generate_news_content_package(cfg, topic):
+    """
+    Use Claude to write a HINGLISH/HINDI news script for a faceless YouTube Short:
+    a {num_scenes}-scene factual news report with concise narration,
+    per-scene visual prompts for stock footage, plus YouTube title/description/tags.
+
+    Returns a dict with keys:
+        Title, Description, Tags, Narration (full Hinglish/Hindi voiceover),
+        ScenePrompts = [visual_prompt_string, ...]
+    Raises on unrecoverable failure.
+    """
+    import anthropic
+    import random
+
+    client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
+    model = cfg.get("anthropic_model", "claude-opus-4-8")
+    num_scenes = int(cfg.get("num_scenes", NUM_SCENES)) # Reuse NUM_SCENES for shorts
+
+    system_prompt = (
+        "You are a Hinglish/Hindi news scriptwriter for a YouTube Shorts channel. "
+        "Your goal is to create concise, factual, and engaging news reports "
+        "suitable for a faceless video format (no presenter). "
+        "You always respond with a single valid JSON object and nothing else."
+    )
+    user_prompt = f"""
+Create a {num_scenes}-scene HINGLISH/HINDI news report SHORT on this topic:
+
+TOPIC: "{topic}"
+
+Rules:
+- Format: Faceless news short. Visuals will be stock footage or AI-generated images, NOT animated characters.
+- Narration: Concise, factual, engaging Hinglish/Hindi. Total spoken narration ~60-90 words (about 30-45 seconds).
+- Story Arc: Start with a hook, present key facts, and a brief conclusion/impact.
+
+Return ONLY a JSON object with EXACTLY these keys:
+
+- "Title": a HIGH-SEO, catchy Hinglish/Hindi YouTube title (under ~70 chars,
+  1-2 emojis). Front-load a searchable keyword people actually type (e.g.
+  "आज की खबर", "Breaking News", "Hindi News") AND a curiosity hook.
+- "Description": 2-3 lines of natural Hinglish/Hindi. First line keyword-rich (repeat the
+  main topic + words like "आज की खबर", "Hindi News", "Breaking News"), then a short
+  subscribe request. Do NOT add hashtags yourself (they are added automatically).
+- "Tags": array of 10-15 relevant Hinglish + English SEO keywords (no '#'), mixing
+  the specific topic with broad terms viewers search.
+- "Narration": the FULL news narration as ONE Hinglish/Hindi paragraph (this is the
+  spoken voiceover — no scene labels, no English, no stage directions).
+- "ScenePrompts": an array of EXACTLY {num_scenes} strings, in order, each being a
+  detailed ENGLISH visual prompt for stock footage or AI image generation. Describe
+  the visual content for this part of the news. Examples: "busy city street at night",
+  "scientist working in a lab", "medical professionals discussing charts",
+  "protestors holding signs", "satellite orbiting Earth".
+  NO text/letters/words/numbers/logos anywhere in the image.
+
+Constraints: EXACTLY {num_scenes} scene prompts. Everything factual and appropriate for news.
+Output valid JSON only.
+"""
+
+    resp = client.messages.create(
+        model=model,
+        max_tokens=4000,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    raw = "".join(b.text for b in resp.content if b.type == "text")
+    data = json.loads(_extract_json(raw))
+
+    # ---- Validation / normalization -------------------------------------- #
+    for key in ("Title", "Description", "Tags", "Narration", "ScenePrompts"):
+        if key not in data or not data[key]:
+            raise ValueError(f"Claude response missing required key: {key}")
+
+    data["Title"] = str(data["Title"]).strip()[:100]
+    data["Tags"] = _normalize_tags(data["Tags"], NEWS_BASE_TAGS)
+    data["Description"] = _add_hashtags_to_description(data["Description"], NEWS_HASHTAGS)
+
+    log.info("News content ready. Title: %s | %d scene prompts | narration %d chars",
+             data["Title"], len(data["ScenePrompts"]), len(str(data["Narration"])))
+    return data
+
+
 def generate_slideshow_content(cfg, topic, mood):
     """
     Claude writes a ~3-minute HINDI 'sabzi cartoon' story (vegetables/fruits as
@@ -702,24 +830,8 @@ JSON only.
             raise ValueError(f"Claude slideshow response missing key: {key}")
 
     data["Title"] = str(data["Title"]).strip()[:100]
-
-    tags = data["Tags"]
-    if isinstance(tags, str):
-        tags = [t.strip() for t in tags.split(",")]
-    tags = [str(t).lstrip("#").strip() for t in tags if str(t).strip()]
-    seen, merged = set(), []
-    for t in tags + SLIDESHOW_TAGS:
-        if t.lower() not in seen:
-            seen.add(t.lower())
-            merged.append(t)
-    data["Tags"] = merged[:15]
-
-    desc = str(data["Description"]).strip()
-    have = {w.lower() for w in desc.split() if w.startswith("#")}
-    add = [h for h in SLIDESHOW_HASHTAGS
-           if h.lower() not in have][:max(0, 13 - len(have))]
-    if add:
-        data["Description"] = desc + "\n\n" + " ".join(add)
+    data["Tags"] = _normalize_tags(data["Tags"], SLIDESHOW_TAGS)
+    data["Description"] = _add_hashtags_to_description(data["Description"], SLIDESHOW_HASHTAGS)
 
     prompts = []
     for sc in data["Scenes"]:
@@ -733,6 +845,24 @@ JSON only.
     log.info("Slideshow story ready. Title: %s | %d scenes | narration %d chars",
              data["Title"], len(prompts), len(str(data["Narration"])))
     return data
+
+
+def _normalize_tags(tags, base_tags):
+    if isinstance(tags, str): tags = [t.strip() for t in tags.split(",")]
+    tags = [str(t).lstrip("#").strip() for t in tags if str(t).strip()]
+    seen, merged = set(), []
+    for t in tags + base_tags:
+        if t.lower() not in seen: seen.add(t.lower()); merged.append(t)
+    return merged[:15]
+
+
+def _add_hashtags_to_description(desc, hashtags):
+    desc = str(desc).strip()
+    have = {w.lower() for w in desc.split() if w.startswith("#")}
+    add = [h for h in hashtags if h.lower() not in have][:max(0, 13 - len(have))]
+    if add:
+        return desc + "\n\n" + " ".join(add)
+    return desc
 
 
 # --------------------------------------------------------------------------- #
@@ -1001,44 +1131,41 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
 # --------------------------------------------------------------------------- #
 #  STEP 2c — Scene images (Higgsfield Soul, 3D Pixar style)
 # --------------------------------------------------------------------------- #
+FREE_IMAGE_TRIES = 3
+
+
 def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920):
     """Render one image (default 9:16; pass width/height for 16:9 etc.) and
-    download it to out_path. Uses the FREE Pollinations generator when
-    image_provider='pollinations' (default), falling back to Higgsfield Soul."""
-    provider = cfg.get("image_provider", "pollinations")
-    if provider in ("pollinations", "free"):
+    download it to out_path.
+
+    FREE Pollinations only. A failure here is nearly always transient — the free
+    tier rate-limits or returns a stub — so retry with a fresh seed rather than
+    falling back to Higgsfield: those credits are spent, so the fallback only
+    ever added a slow 403 to every miss (six slides were lost that way in the
+    last slideshow) and could silently start charging again if topped up.
+    """
+    import random
+    import time as _time
+
+    last = None
+    for attempt in range(1, FREE_IMAGE_TRIES + 1):
         try:
-            _download_url(_free_image_url(visual_prompt, width=width,
-                                          height=height), out_path)
+            # A fresh seed each try: the same seed tends to fail the same way.
+            url = _free_image_url(visual_prompt, seed=random.randint(1, 9_000_000),
+                                  width=width, height=height)
+            _download_url(url, out_path)
             if os.path.exists(out_path) and os.path.getsize(out_path) > 5000:
                 return out_path
-            log.warning("Free image looked empty; falling back to Higgsfield.")
+            last = "the image came back empty"
         except Exception as exc:                              # noqa: BLE001
-            log.warning("Free image failed (%s); falling back to Higgsfield.",
-                        str(exc)[:120])
+            last = str(exc)[:120]
 
-    A = HIGGSFIELD_API
-    api_key = cfg.get("higgsfield_api_key", "").strip()
-    if not api_key:
-        raise RuntimeError(
-            "higgsfield_api_key missing in config.json (cloud.higgsfield.ai)."
-        )
-    headers = {
-        "Authorization": f"Key {api_key}",
-        "Content-Type": "application/json",
-    }
-    # Higgsfield Soul only accepts fixed sizes; 2048x1152 for 16:9, else 9:16.
-    soul_size = "2048x1152" if width > height else cfg.get(
-        "higgsfield_image_size", A["image_size"])
-    url = _hf_submit_and_wait(
-        A, headers, A["text2image_path"],
-        {"prompt": visual_prompt, "width_and_height": soul_size},
-        kind="image",
-    )
-    _download_url(url, out_path)
-    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-        raise RuntimeError("Scene image download produced an empty file.")
-    return out_path
+        if attempt < FREE_IMAGE_TRIES:
+            log.warning("Free image try %d/%d failed (%s); retrying...",
+                        attempt, FREE_IMAGE_TRIES, last)
+            _time.sleep(3 * attempt)   # back off; the free tier rate-limits
+
+    raise RuntimeError(f"Free image failed after {FREE_IMAGE_TRIES} tries: {last}")
 
 
 def generate_scene_clip(cfg, image_prompt, video_prompt, out_path):
@@ -1826,6 +1953,7 @@ def run_pipeline():
     log.info("PIPELINE RUN START  (id=%s)", run_id)
     log.info("=" * 70)
 
+    # Initialize variables to None to ensure they are defined even if early steps fail
     cfg = None
     pkg = None
     voice_path = os.path.join(WORK_DIR, f"voice_{run_id}.mp3")
@@ -1907,6 +2035,80 @@ def run_pipeline():
                 f"Step content: {title}\n"
                 f"Error: {exc}",
             )
+
+
+def run_news_short_pipeline():
+    """
+    One NEWS SHORT run: news topic -> Hinglish/Hindi news script ->
+    free edge-tts voiceover -> free stock footage/images ->
+    9:16 animated video + music -> YouTube. Near-free (only Claude text costs).
+    """
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log.info("=" * 70)
+    log.info("NEWS SHORT RUN START (id=%s)", run_id)
+    log.info("=" * 70)
+
+    cfg = None
+    pkg = None
+    voice_path = os.path.join(WORK_DIR, f"news_voice_{run_id}.mp3")
+    final_video = os.path.join(WORK_DIR, f"news_final_{run_id}.mp4")
+    scene_paths = []
+
+    try:
+        ensure_dirs()
+        cfg = load_config()
+
+        # 1. News Topic + Script ----------------------------------------- #
+        news_info = pick_news_topic(cfg)
+        pkg = generate_news_content_package(cfg, news_info["topic"])
+        # No hook for news shorts, typically.
+
+        # 2. Hinglish/Hindi voiceover ------------------------------------ #
+        # Use a slightly more mature voice for news if available, or default.
+        _, voice_dur = synthesize_hindi_voice(
+            cfg, pkg["Narration"], voice_path,
+            _tts_voice_override=cfg.get("news_tts_voice", "hi-IN-MadhurNeural"),
+            _tts_rate_override=cfg.get("news_tts_rate", "+5%"),
+            _tts_pitch_override=cfg.get("news_tts_pitch", "+0Hz"),
+        )
+
+        # 3. Scene visuals (FREE stock footage) + assemble the video ----- #
+        # Use stock_video mode for faceless news shorts.
+        smv = cfg.get("shorts_music_volume", 0.08) # Reuse shorts music volume
+        
+        # For news, we explicitly use stock footage for visuals.
+        scene_paths = render_stock_clips(cfg, pkg["ScenePrompts"], run_id,
+                                         width=1080, height=1920)
+        assemble_animated_video(scene_paths, voice_path, voice_dur,
+                                final_video, music_volume=smv)
+
+        # 4. Upload ------------------------------------------------------ #
+        url = upload_to_youtube(cfg, final_video, pkg)
+
+        # 5. Notify ------------------------------------------------------ #
+        send_telegram(
+            cfg,
+            "✅ News Short uploaded successfully!\n\n"
+            f"🎬 Title: {pkg['Title']}\n"
+            f"📈 Topic: {news_info['topic']} ({news_info['source']})\n"
+            f"🔗 {url}",
+        )
+        # Tidy the work dir (keep nothing transient)
+        for p in scene_paths + [voice_path, final_video]:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
+        log.info("NEWS SHORT RUN SUCCESS (id=%s)", run_id)
+
+    except Exception as exc:                                  # noqa: BLE001
+        log.error("NEWS SHORT RUN FAILED (id=%s): %s", run_id, exc)
+        log.error(traceback.format_exc())
+        if cfg is not None:
+            title = pkg["Title"] if pkg else "(content not generated)"
+            send_telegram(cfg, f"❌ News Short FAILED (id={run_id})\nError: {exc}")
 
 
 def run_slideshow_pipeline():
@@ -2044,6 +2246,8 @@ if __name__ == "__main__":
     arg = sys.argv[1].lower() if len(sys.argv) > 1 else ""
     if arg == "run":
         run_pipeline()
+    elif arg == "news_short":
+        run_news_short_pipeline()
     elif arg == "slideshow":
         run_slideshow_pipeline()
     elif arg == "reauth":
