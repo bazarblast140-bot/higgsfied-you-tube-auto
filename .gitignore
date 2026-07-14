@@ -1,6 +1,6 @@
 # Whitelist approach: ignore EVERYTHING, then allow only safe source files.
 # This guarantees secrets (config.json, token.json, client_secret.json) and all
-# junk (work/, logs/, assets/, .github/ stray copies, *.bat, *.ps1, etc.) are
+# junk (work/, logs/, .github/ stray copies, *.bat, *.ps1, etc.) are
 # NEVER committed or pushed to GitHub.
 *
 !.gitignore
@@ -8,3 +8,17 @@
 !requirements.txt
 !topic_bank.json
 !slideshow_topics.json
+
+# The runner builds the video in the cloud, so music has to travel with the
+# repo -- tracks sitting only on the laptop never reach it. Each parent
+# directory needs its own negation, because git will not descend into an
+# excluded directory to find un-excluded files inside it.
+#
+# Only YouTube Audio Library tracks belong here: they are the one source that
+# carries no Content ID risk for the channel uploading the video.
+!assets/
+!assets/music/
+!assets/music/*/
+!assets/music/*/*.mp3
+!assets/music/*/*.m4a
+!assets/music/*/*.wav
