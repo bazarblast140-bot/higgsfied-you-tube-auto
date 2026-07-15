@@ -112,8 +112,8 @@ TTS_PITCH    = "+22Hz"                  # higher = cuter, child-like
 MUSIC_VOLUME = 0.08                     # background music level for SHORTS (0.08 = subtle)
 
 # Slideshow long-video settings (sabzi/veggie emotional + horror stories).
-NUM_SLIDESHOW_SCENES = 24               # still images across a ~3 min video
-SLIDESHOW_VOICE      = "hi-IN-MadhurNeural"   # mature storyteller voice
+NUM_SLIDESHOW_SCENES = 45               # stills across a ~10 min horror video
+SLIDESHOW_VOICE      = "hi-IN-MadhurNeural"   # mature male storyteller voice
 SLIDESHOW_RATE       = "+0%"            # natural storytelling pace
 SLIDESHOW_PITCH      = "+0Hz"
 SLIDESHOW_MUSIC_VOLUME = 0.09           # under the voiceover; 0.18 drowned the narration
@@ -173,15 +173,18 @@ HOOK_STYLES = [
 ]
 
 # SEO for the sabzi/veggie slideshow long videos.
+# The suffix appended to every slideshow title, matching the horror-channel
+# convention: "<Hindi hook> | <English> | Chudail Ki Kahaniya | Bhoot Kahaniya".
+SLIDESHOW_TITLE_SUFFIX = "Chudail Ki Kahaniya | Bhoot Kahaniya | Horror Story"
 SLIDESHOW_HASHTAGS = [
-    "#Shorts", "#sabjikahani", "#sabzicartoon", "#hindikahani", "#kahani",
-    "#emotionalstory", "#vegetablecartoon", "#viralshorts", "#trending",
-    "#hindistory", "#gaonkikahani", "#dilchhukahani",
+    "#horrorstory", "#chudail", "#bhootkikahani", "#hindihorror", "#kahani",
+    "#horror", "#chudailkikahaniya", "#bhootkahaniya", "#darrkahani",
+    "#hindikahani", "#gaonkikahani", "#scarystories",
 ]
 SLIDESHOW_TAGS = [
-    "sabzi kahani", "sabzi cartoon", "vegetable cartoon hindi", "hindi kahani",
-    "emotional story hindi", "aalu kahani", "gaon ki kahani", "hindi story",
-    "dil chhu lene wali kahani", "sabji cartoon story",
+    "chudail ki kahani", "bhoot ki kahani", "horror story hindi", "hindi horror",
+    "chudail", "bhoot kahaniya", "darr ki kahani", "gaon ki kahani",
+    "hindi kahani", "scary stories hindi", "horror stories", "dayan ki kahani",
 ]
 TARGET_SECONDS_MIN = 40                # acceptable video length window
 TARGET_SECONDS_MAX = 55
@@ -755,81 +758,87 @@ Output valid JSON only.
 
 def generate_slideshow_content(cfg, topic, mood):
     """
-    Claude writes a ~3-minute HINDI 'sabzi cartoon' story (vegetables/fruits as
-    people in an Indian village). `mood` is "emotional" (poor-vs-rich drama,
-    betrayal, sacrifice, tears, moral) or "scary" (family-safe village
-    horror/suspense). Returns:
+    Claude writes a long (~10 minute) HINDI chudail/bhoot HORROR story in the
+    style of Dream Stories TV: an original, family-safe Indian village ghost
+    story — eerie and suspenseful, never gore or adult. Returns:
         Title, Description, Tags, Narration (full Hindi voiceover),
-        ScenePrompts = [English image prompt, ...]  (NUM_SLIDESHOW_SCENES of them)
+        ScenePrompts = [English image prompt, ...]  (~NUM_SLIDESHOW_SCENES)
     """
     import anthropic
 
     client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
     model = cfg.get("anthropic_model", "claude-opus-4-8")
     n = int(cfg.get("num_slideshow_scenes", NUM_SLIDESHOW_SCENES))
-
-    if mood == "scary":
-        tone = ("a family-safe SPOOKY village horror/suspense story — mystery, "
-                "eerie atmosphere, fear and a chilling twist, but NO gore or "
-                "adult content")
-        light = ("dark eerie night, moonlight, fog, cold blue/green tones, "
-                 "spooky cinematic shadows")
-    else:
-        tone = ("a heart-touching EMOTIONAL drama — poor vs rich, love, "
-                "betrayal, sacrifice, tears, and a moving twist with a moral")
-        light = ("warm golden or soft sad cinematic lighting, rural Indian "
-                 "village, emotional atmosphere")
+    words = int(cfg.get("slideshow_words", 1600))  # ~10 min at storytelling pace
 
     system_prompt = (
-        "You are a scriptwriter for a viral HINDI 'sabzi (vegetable) cartoon' "
-        "storytelling YouTube channel (like Sabzi Cartoon TV / Kahani Manthan). "
-        "All characters are vegetables and fruits living as people in an Indian "
-        "village (aalu/potato, tamatar/tomato, mooli/radish, pyaaz/onion, "
-        "baingan/brinjal, karela, mirchi, etc.), wearing Indian clothes. You "
-        "always respond with a single valid JSON object and nothing else."
+        "You are the lead writer for a hugely popular HINDI horror-storytelling "
+        "YouTube channel (in the mould of Dream Stories TV / Chudail Ki "
+        "Kahaniya). You write long, gripping Indian village ghost stories — "
+        "chudail, dayan, bhoot, aatma — narrated by a single mature male "
+        "storyteller. The stories are genuinely scary and atmospheric but always "
+        "FAMILY-SAFE: suspense and dread, never gore, blood or adult content. "
+        "You always respond with a single valid JSON object and nothing else."
     )
     user_prompt = f"""
-Write {tone} for this premise, as a ~3 minute HINDI video:
+Write a long ~10 minute HINDI horror story for this premise:
 
 PREMISE: "{topic}"
 
 Return ONLY a JSON object with EXACTLY these keys:
 
-- "Title": a dramatic, emotional, high-CTR Hindi title with 1-2 emojis (like the
-  viral sabzi-cartoon channels), that makes people want to click.
-- "Description": 3-5 lines of emotional Hindi — a teaser of the story, 2-3
-  curiosity questions ("क्या ...?"), the moral/message, and a subscribe request.
-  Do NOT add hashtags (added automatically).
-- "Tags": array of 10-15 relevant hindi/english SEO keywords (no '#').
-- "Narration": a SINGLE flowing HINDI (Devanagari) voiceover paragraph of about
-  350-420 words (spoken for ~3 minutes) — an engaging storyteller telling the
-  whole story start to end (strong hook, rising drama, emotional/scary climax,
-  twist, and a closing moral + CTA). Only spoken words, no scene labels.
+- "TitleHindi": a short, dramatic, high-CTR HINDI hook title (like "मंदिर के
+  बाहर जाना मना है"). No emojis, keep it under 45 characters.
+- "TitleEnglish": a 2-4 word English version of the hook (like "Don't Go
+  Outside" or "Highway Witch").
+- "Description": 4-6 lines of gripping Hindi — a teaser that sets the scene,
+  2-3 curiosity questions ("क्या ...?", "कौन थी वो ...?"), a spine-chilling line,
+  and a subscribe request. Do NOT add hashtags (added automatically).
+- "Tags": array of 10-15 relevant hindi/english horror SEO keywords (no '#').
+- "Narration": a SINGLE flowing HINDI (Devanagari) voiceover of about {words}
+  words (spoken for ~10 minutes) — a masterful storyteller telling the whole
+  story start to finish: a chilling hook in the first lines, slow-building
+  dread, vivid detail, a terrifying climax, an unexpected twist, and a haunting
+  closing line + a request to like and subscribe. Only spoken words, no scene
+  labels, no headings.
 - "Scenes": an array of EXACTLY {n} objects, in order, each with ONE key
-  "visual_prompt": a detailed ENGLISH image prompt showing this beat of the
-  story. Characters are cute-but-expressive vegetable/fruit PEOPLE (veggie head +
-  human body in Indian clothes) in an Indian village. Style: cinematic 3D
-  Pixar/realistic render, ultra-detailed, {light}, WIDE 16:9 landscape
-  (horizontal) cinematic composition. Absolutely NO text, letters, numbers,
-  words or logos in the image. Keep the main characters visually consistent
-  across scenes.
+  "visual_prompt": a detailed ENGLISH image prompt for that beat of the story.
+  Style: ultra-realistic cinematic 3D horror render, photorealistic, dark Indian
+  village at night, moonlight and fog, deep shadows, dramatic and terrifying,
+  highly detailed, WIDE 16:9 landscape composition. When the ghost appears, show
+  a classic Indian chudail — a woman in a red saree with very long black hair and
+  a pale, eerie face. Keep the human characters and the chudail visually
+  CONSISTENT across every scene. Absolutely NO text, letters, numbers, words or
+  logos in the image.
 
-Constraints: Narration in Hindi ~350-420 words. EXACTLY {n} scenes. Output valid
-JSON only.
+Constraints: Narration in Hindi about {words} words. EXACTLY {n} scenes. Output
+valid JSON only.
 """
 
-    resp = client.messages.create(
-        model=model, max_tokens=8000, system=system_prompt,
+    # A ~10-minute story with 45 image prompts is a large generation; the SDK
+    # requires streaming once max_tokens is this high, so collect the stream.
+    with client.messages.stream(
+        model=model, max_tokens=32000, system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
-    )
-    raw = "".join(b.text for b in resp.content if b.type == "text")
+    ) as stream:
+        raw = "".join(
+            event.delta.text
+            for event in stream
+            if event.type == "content_block_delta"
+            and getattr(event.delta, "type", "") == "text_delta"
+        )
     data = json.loads(_extract_json(raw))
 
-    for key in ("Title", "Description", "Tags", "Narration", "Scenes"):
+    for key in ("TitleHindi", "TitleEnglish", "Description", "Tags",
+                "Narration", "Scenes"):
         if key not in data or not data[key]:
             raise ValueError(f"Claude slideshow response missing key: {key}")
 
-    data["Title"] = str(data["Title"]).strip()[:100]
+    # Assemble the channel's title convention, trimming the hook if the whole
+    # thing would blow past YouTube's 100-character limit.
+    hook = f"{str(data['TitleHindi']).strip()} | {str(data['TitleEnglish']).strip()}"
+    suffix = f" | {SLIDESHOW_TITLE_SUFFIX}"
+    data["Title"] = (hook[:100 - len(suffix)] + suffix)[:100]
     data["Tags"] = _normalize_tags(data["Tags"], SLIDESHOW_TAGS)
     data["Description"] = _add_hashtags_to_description(data["Description"], SLIDESHOW_HASHTAGS)
 
