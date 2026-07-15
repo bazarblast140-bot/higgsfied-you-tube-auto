@@ -176,6 +176,20 @@ HOOK_STYLES = [
 # The suffix appended to every slideshow title, matching the horror-channel
 # convention: "<Hindi hook> | <English> | Chudail Ki Kahaniya | Bhoot Kahaniya".
 SLIDESHOW_TITLE_SUFFIX = "Chudail Ki Kahaniya | Bhoot Kahaniya | Horror Story"
+
+# Wrapped around every slideshow image prompt to push Flux toward a sharp,
+# photoreal, consistent horror frame instead of a soft cartoon one.
+SLIDESHOW_IMG_STYLE = (
+    "Ultra-realistic cinematic horror film still, photorealistic, shot on a "
+    "cinema camera, highly detailed faces, dramatic moody lighting, sharp "
+    "focus, depth of field, 8k, atmospheric and terrifying. "
+)
+SLIDESHOW_IMG_QUALITY = (
+    " Masterpiece quality, hyper-detailed, consistent character design across "
+    "the whole story. Spooky and eerie but NOT graphic: absolutely no blood, no "
+    "gore, no wounds, no zombie — a ghostly, atmospheric scare suitable for a "
+    "family audience. Absolutely no text, no letters, no watermark, no logo."
+)
 SLIDESHOW_HASHTAGS = [
     "#horrorstory", "#chudail", "#bhootkikahani", "#hindihorror", "#kahani",
     "#horror", "#chudailkikahaniya", "#bhootkahaniya", "#darrkahani",
@@ -795,24 +809,37 @@ Return ONLY a JSON object with EXACTLY these keys:
   2-3 curiosity questions ("क्या ...?", "कौन थी वो ...?"), a spine-chilling line,
   and a subscribe request. Do NOT add hashtags (added automatically).
 - "Tags": array of 10-15 relevant hindi/english horror SEO keywords (no '#').
+- "Characters": an array of the 2-4 main characters in the story. Each is an
+  object with:
+    - "name": the character's name (English).
+    - "look": ONE English sentence fixing their exact, unchanging appearance —
+      age, gender, face, hair, skin tone, body, and specific clothing with
+      colours. Human characters must look like ordinary Indian villagers. For
+      the ghost, describe a classic Indian chudail: a woman in a red saree with
+      very long messy black hair covering part of a pale, eerie face and dark
+      sunken eyes — creepy and ghostly, but NOT bloody, NOT a zombie, no wounds.
+      Make each character visually distinct so they are never confused.
 - "Narration": a SINGLE flowing HINDI (Devanagari) voiceover of about {words}
   words (spoken for ~10 minutes) — a masterful storyteller telling the whole
   story start to finish: a chilling hook in the first lines, slow-building
   dread, vivid detail, a terrifying climax, an unexpected twist, and a haunting
   closing line + a request to like and subscribe. Only spoken words, no scene
   labels, no headings.
-- "Scenes": an array of EXACTLY {n} objects, in order, each with ONE key
-  "visual_prompt": a detailed ENGLISH image prompt for that beat of the story.
-  Style: ultra-realistic cinematic 3D horror render, photorealistic, dark Indian
-  village at night, moonlight and fog, deep shadows, dramatic and terrifying,
-  highly detailed, WIDE 16:9 landscape composition. When the ghost appears, show
-  a classic Indian chudail — a woman in a red saree with very long black hair and
-  a pale, eerie face. Keep the human characters and the chudail visually
-  CONSISTENT across every scene. Absolutely NO text, letters, numbers, words or
-  logos in the image.
+- "Scenes": an array of EXACTLY {n} objects, IN THE SAME ORDER as the story is
+  narrated, so each image shows exactly what the narration is talking about at
+  that moment. Each object has ONE key "visual_prompt": a detailed ENGLISH image
+  prompt for that beat. CRITICAL RULES for every visual_prompt:
+    * Whichever character(s) appear in this beat, describe them by COPYING their
+      full "look" sentence VERBATIM into the prompt, so the same person looks
+      identical in every scene they appear in. Never invent a new appearance.
+    * Show the character the narration is currently about — if the story is
+      following the farmer here, the farmer is in this frame; when the chudail
+      appears in the story, she appears here.
+    * Set it in a dark Indian village/rural night: moonlight, fog, deep shadows,
+      WIDE 16:9 landscape composition. NO text, letters, numbers or logos.
 
-Constraints: Narration in Hindi about {words} words. EXACTLY {n} scenes. Output
-valid JSON only.
+Constraints: Narration in Hindi about {words} words. EXACTLY {n} scenes, in
+narration order. Output valid JSON only.
 """
 
     # A ~10-minute story with 45 image prompts is a large generation; the SDK
@@ -830,9 +857,15 @@ valid JSON only.
     data = json.loads(_extract_json(raw))
 
     for key in ("TitleHindi", "TitleEnglish", "Description", "Tags",
-                "Narration", "Scenes"):
+                "Characters", "Narration", "Scenes"):
         if key not in data or not data[key]:
             raise ValueError(f"Claude slideshow response missing key: {key}")
+
+    cast = ", ".join(
+        f"{c.get('name', '?')} ({c.get('look', '')})"
+        for c in data["Characters"] if isinstance(c, dict)
+    )
+    log.info("Cast: %s", cast[:400])
 
     # Assemble the channel's title convention, trimming the hook if the whole
     # thing would blow past YouTube's 100-character limit.
@@ -1143,7 +1176,8 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
 FREE_IMAGE_TRIES = 3
 
 
-def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920):
+def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920,
+                         base_seed=None):
     """Render one image (default 9:16; pass width/height for 16:9 etc.) and
     download it to out_path.
 
@@ -1152,6 +1186,11 @@ def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920):
     falling back to Higgsfield: those credits are spent, so the fallback only
     ever added a slow 403 to every miss (six slides were lost that way in the
     last slideshow) and could silently start charging again if topped up.
+
+    `base_seed`, when given, is used on the first try so that every scene in one
+    video shares a seed — with Flux that keeps the characters' faces and the
+    overall look consistent from scene to scene. Retries fall back to a random
+    seed, since the same seed tends to fail the same way.
     """
     import random
     import time as _time
@@ -1159,8 +1198,9 @@ def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920):
     last = None
     for attempt in range(1, FREE_IMAGE_TRIES + 1):
         try:
-            # A fresh seed each try: the same seed tends to fail the same way.
-            url = _free_image_url(visual_prompt, seed=random.randint(1, 9_000_000),
+            seed = (base_seed if attempt == 1 and base_seed is not None
+                    else random.randint(1, 9_000_000))
+            url = _free_image_url(visual_prompt, seed=seed,
                                   width=width, height=height)
             _download_url(url, out_path)
             if os.path.exists(out_path) and os.path.getsize(out_path) > 5000:
@@ -1279,29 +1319,31 @@ def _safe_prompt(prompt):
 
 def render_slideshow_images(cfg, prompts, run_id):
     """
-    Generate one FREE (Pollinations) image per slideshow scene prompt, with a
-    small delay between calls so the free service doesn't rate-limit (which
-    returns a wrong/duplicate image). Resilient: retry once with a safe-reworded
-    prompt, skip on repeated failure. Returns the list of image paths.
+    Generate one FREE (Pollinations) image per slideshow scene prompt.
+
+    Every prompt is wrapped in the photoreal horror style so the frames look
+    cinematic rather than soft, and ONE seed is shared across the whole video so
+    the characters stay recognisable from scene to scene. `generate_scene_image`
+    retries each frame internally; a frame that still fails is skipped. A small
+    delay between calls keeps the free tier from rate-limiting. Returns the list
+    of image paths.
     """
+    import random
     import time as _time
+
     paths = []
     total = len(prompts)
+    base_seed = random.randint(1, 9_000_000)  # one look for the whole story
     for i, prompt in enumerate(prompts, 1):
         out = os.path.join(WORK_DIR, f"slide_{run_id}_{i}.png")
-        safe = ("Wholesome family-friendly cartoon illustration, no real "
-                "people, fully clothed. " + prompt)
-        for attempt, p in enumerate((prompt, safe), 1):
-            try:
-                log.info("Slideshow image %d/%d (try %d)...", i, total, attempt)
-                generate_scene_image(cfg, p, out, width=1920, height=1080)
-                paths.append(out)
-                break
-            except Exception as exc:                          # noqa: BLE001
-                log.warning("Slide %d try %d failed (%s).", i, attempt,
-                            str(exc)[:120])
-        else:
-            log.warning("Slide %d skipped after retries.", i)
+        styled = SLIDESHOW_IMG_STYLE + str(prompt).strip() + SLIDESHOW_IMG_QUALITY
+        try:
+            log.info("Slideshow image %d/%d...", i, total)
+            generate_scene_image(cfg, styled, out, width=1920, height=1080,
+                                 base_seed=base_seed)
+            paths.append(out)
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("Slide %d skipped (%s).", i, str(exc)[:120])
         if i < total:
             _time.sleep(FREE_IMAGE_DELAY_S)
     if not paths:
