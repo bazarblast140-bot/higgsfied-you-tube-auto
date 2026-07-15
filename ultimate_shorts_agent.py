@@ -112,7 +112,7 @@ TTS_PITCH    = "+22Hz"                  # higher = cuter, child-like
 MUSIC_VOLUME = 0.08                     # background music level for SHORTS (0.08 = subtle)
 
 # Slideshow long-video settings (sabzi/veggie emotional + horror stories).
-NUM_SLIDESHOW_SCENES = 45               # stills across a ~10 min horror video
+NUM_SLIDESHOW_SCENES = 24               # stills across a ~5 min horror video
 SLIDESHOW_VOICE      = "hi-IN-MadhurNeural"   # mature male storyteller voice
 SLIDESHOW_RATE       = "+0%"            # natural storytelling pace
 SLIDESHOW_PITCH      = "+0Hz"
@@ -772,7 +772,7 @@ Output valid JSON only.
 
 def generate_slideshow_content(cfg, topic, mood):
     """
-    Claude writes a long (~10 minute) HINDI chudail/bhoot HORROR story in the
+    Claude writes a ~5 minute HINDI chudail/bhoot HORROR story in the
     style of Dream Stories TV: an original, family-safe Indian village ghost
     story — eerie and suspenseful, never gore or adult. Returns:
         Title, Description, Tags, Narration (full Hindi voiceover),
@@ -783,7 +783,7 @@ def generate_slideshow_content(cfg, topic, mood):
     client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
     model = cfg.get("anthropic_model", "claude-opus-4-8")
     n = int(cfg.get("num_slideshow_scenes", NUM_SLIDESHOW_SCENES))
-    words = int(cfg.get("slideshow_words", 1600))  # ~10 min at storytelling pace
+    words = int(cfg.get("slideshow_words", 750))  # ~5 min at storytelling pace
 
     system_prompt = (
         "You are the lead writer for a hugely popular HINDI horror-storytelling "
@@ -795,7 +795,7 @@ def generate_slideshow_content(cfg, topic, mood):
         "You always respond with a single valid JSON object and nothing else."
     )
     user_prompt = f"""
-Write a long ~10 minute HINDI horror story for this premise:
+Write a gripping ~5 minute HINDI horror story for this premise:
 
 PREMISE: "{topic}"
 
@@ -820,7 +820,7 @@ Return ONLY a JSON object with EXACTLY these keys:
       sunken eyes — creepy and ghostly, but NOT bloody, NOT a zombie, no wounds.
       Make each character visually distinct so they are never confused.
 - "Narration": a SINGLE flowing HINDI (Devanagari) voiceover of about {words}
-  words (spoken for ~10 minutes) — a masterful storyteller telling the whole
+  words (spoken for ~5 minutes) — a masterful storyteller telling the whole
   story start to finish: a chilling hook in the first lines, slow-building
   dread, vivid detail, a terrifying climax, an unexpected twist, and a haunting
   closing line + a request to like and subscribe. Only spoken words, no scene
@@ -842,8 +842,8 @@ Constraints: Narration in Hindi about {words} words. EXACTLY {n} scenes, in
 narration order. Output valid JSON only.
 """
 
-    # A ~10-minute story with 45 image prompts is a large generation; the SDK
-    # requires streaming once max_tokens is this high, so collect the stream.
+    # A multi-scene story is still a sizable generation; the SDK requires
+    # streaming once max_tokens is this high, so collect the stream.
     with client.messages.stream(
         model=model, max_tokens=32000, system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
