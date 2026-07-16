@@ -122,15 +122,30 @@ FREE_IMAGE_DELAY_S   = 3                # gap between free-image calls (avoid ra
 # Reach / SEO — niche hashtags appended to every description, and base keywords
 # merged into tags so YouTube surfaces the video in search + suggested.
 SEO_HASHTAGS = [
-    "#Shorts", "#hindikahani", "#kahani", "#bachonkikahani", "#moralstory",
-    "#hindicartoon", "#kidsstory", "#storytime", "#viralshorts", "#trending",
-    "#hindistories", "#cartoonstory",
+    "#Shorts", "#sabjikahani", "#aalukahani", "#mulididi", "#kahani",
+    "#emotionalstory", "#sabzicartoon", "#hindikahani", "#vegetablecartoon",
+    "#gaonkikahani", "#moralstory", "#dilchhukahani",
 ]
 SEO_BASE_TAGS = [
-    "hindi kahani", "bachon ki kahani", "moral story hindi", "hindi cartoon",
-    "kids story hindi", "cartoon kahani", "hindi moral stories",
-    "bedtime stories hindi", "hindi stories for kids", "shorts",
+    "sabji kahani", "aalu muli ki kahani", "muli didi", "vegetable cartoon hindi",
+    "emotional story hindi", "sabzi cartoon", "gaon ki kahani", "hindi kahani",
+    "dil chhu lene wali kahani", "moral story hindi",
 ]
+
+# The channel's SIGNATURE RECURRING CAST — starred (Muli Didi) in EVERY short so
+# the channel has one familiar face, with fixed looks so they stay identical
+# across scenes AND across videos.
+MULI_CAST = (
+    "MULI DIDI (the heroine — she MUST appear in every story): a kind, graceful "
+    "female radish woman with a long smooth white radish body, a big fresh green "
+    "leafy top on her head, large expressive emotional eyes, wearing a bright "
+    "pink or red Indian saree. "
+    "GARIB AALU: a poor, humble potato man with a round light-brown potato body, "
+    "sad kind eyes, wearing a simple patched Indian kurta. "
+    "AMEER BAINGAN: the rich, arrogant one — a shiny purple brinjal man in a "
+    "fancy black suit, black sunglasses and a gold chain. "
+    "Supporting villagers may be a tomato, chilli, carrot or cauliflower person."
+)
 
 # SEO for the faceless news shorts.
 NEWS_HASHTAGS = [
@@ -528,70 +543,68 @@ def generate_content_package(cfg, topic):
     flavor = random.choice(STYLE_FLAVORS)
 
     system_prompt = (
-        "You are a Hindi children's cartoon story writer for a YouTube Shorts "
-        "channel in the style of 'NITIN CARTOON ZONE' — 3D Pixar/Disney "
-        "animation, cute little Indian kids with big expressive eyes, wholesome "
-        "moral or funny stories. You always respond with a single valid JSON "
-        "object and nothing else."
+        "You are the head writer for a viral HINDI 'sabzi/veggie cartoon' "
+        "emotional-drama YouTube channel (like the hugely popular Aalu-Muli / "
+        "Sabji Cartoon channels). Every story stars the SAME recurring cast of "
+        "vegetable characters living as people in an Indian village, led by MULI "
+        "DIDI. The stories are emotional family dramas — poverty, sacrifice, "
+        "betrayal, love, respect — always ending with a clear moral, and always "
+        "family-friendly. You always respond with a single valid JSON object and "
+        "nothing else."
     )
     user_prompt = f"""
-Create a {num_scenes}-scene HINDI children's cartoon SHORT STORY on this topic:
+Write a {num_scenes}-scene HINDI emotional 'sabzi cartoon' SHORT STORY based on
+this premise:
 
-TOPIC: "{topic}"
+PREMISE: "{topic}"
+
+RECURRING CAST — use these EXACT characters and looks (do not invent new looks):
+{MULI_CAST}
 
 Rules:
-- Style: 3D Pixar/Disney animation, vertical 9:16, bright colourful, cinematic.
-- Visual mood for THIS video (use it in every scene's image_prompt): {flavor}.
-- Characters: pick a FRESH, DIFFERENT and fun main character for THIS story —
-  vary it every time (e.g. a cute animal like a fox/panda/elephant/monkey, a
-  quirky bird, a friendly robot, a talking fruit/vegetable, or an Indian kid) —
-  so every video looks new and distinct. Give it big expressive eyes and lots of
-  personality. Define each main character ONCE with a detailed look (species/age,
-  clothes, colours, features) and REUSE that exact description in EVERY scene's
-  image_prompt so the character stays consistent across scenes.
-- Story arc across the {num_scenes} scenes: setup -> action -> a funny or
-  emotional twist -> happy ending with a clear moral (seekh).
-- Narration: simple, fluent, natural Hindi as a child narrator would tell it.
-- Total spoken narration ~70-80 words (about 30 seconds) — keep it tight.
+- MULI DIDI must be central to the story. Use the fixed cast above; every scene's
+  image_prompt must copy the FULL look (verbatim) of whichever characters appear,
+  so they stay identical across scenes and across videos.
+- Style: cinematic 3D Pixar-style cartoon, vertical 9:16, Indian village, warm
+  emotional lighting. Visual mood for THIS video: {flavor}.
+- Story arc across the {num_scenes} scenes: setup -> an emotional turn (sacrifice,
+  betrayal, hardship or a test) -> a moving twist -> a heartfelt ending with a
+  clear moral (seekh). Emotional and gripping, but family-safe.
+- SCENE 1 is the HOOK: the most dramatic/emotional moment, to stop the scroll.
+- Narration: fluent, natural, emotional Hindi storytelling. Total ~100-120 words
+  (about 40-45 seconds) so the story is clear, not rushed.
 
 Return ONLY a JSON object with EXACTLY these keys:
 
-- "Title": a HIGH-SEO, catchy Hindi/Hinglish YouTube title (under ~70 chars,
-  1-2 emojis). Front-load a searchable keyword people actually type (e.g.
-  "हिंदी कहानी", "moral story", "bachon ki kahani") AND a curiosity hook.
-- "Description": 2-3 lines of natural Hindi. First line keyword-rich (repeat the
-  main topic + words like "हिंदी कहानी", "moral story", "cartoon"), then a short
-  subscribe request. Do NOT add hashtags yourself (they are added automatically).
-- "Tags": array of 10-15 relevant hindi + english SEO keywords (no '#'), mixing
-  the specific topic with broad terms viewers search.
-- "Narration": the FULL story narration as ONE Hindi paragraph (this is the
+- "Title": a HIGH-SEO, dramatic Hindi/Hinglish YouTube title (under ~90 chars,
+  1-2 emojis), in the viral sabzi-cartoon style — front-load a curiosity hook
+  and searchable keywords (e.g. "मूली", "गरीब आलू", "sabji kahani", "emotional
+  story"). Example shape: "😢 गरीब आलू की पत्नी मूली ने दिया धोखा | Sabji Kahani".
+- "Description": 2-3 lines of emotional Hindi. First line keyword-rich, then a
+  subscribe request. Do NOT add hashtags yourself (added automatically).
+- "Tags": array of 10-15 relevant hindi + english SEO keywords (no '#').
+- "Narration": the FULL story narration as ONE flowing Hindi paragraph (the
   spoken voiceover — no scene labels, no English, no stage directions).
 - "Scenes": an array of EXACTLY {num_scenes} objects, in order, each with:
     - "image_prompt": a detailed ENGLISH image prompt. It MUST start with
-      "3D Pixar-style animation," include the FULL consistent character
-      description(s), describe this scene, and end with
-      "vertical 9:16 composition, wholesome". Make it PREMIUM, LIFELIKE and
-      characterful: award-winning high-end Pixar/DreamWorks-quality 3D render,
-      photorealistic 3D with subsurface-scattering skin, physically-based
-      materials, ultra-detailed hyper-realistic fur/skin/fabric textures,
-      volumetric cinematic lighting, ray-traced reflections, soft depth of
-      field, expressive charismatic faces, rich vivid colours, rendered in
-      Unreal Engine 5 / Octane, 8K film-quality frame like a still from a
-      big-studio animated feature. NO text/letters/words/numbers/logos
-      anywhere in the image.
+      "3D Pixar-style cartoon animation," then COPY the full verbatim look of the
+      character(s) in this beat from the cast above, describe this scene in an
+      Indian village, and end with "vertical 9:16 composition". Make it premium:
+      cute-but-expressive vegetable characters with big emotional eyes, wearing
+      Indian clothes, volumetric cinematic lighting, ultra-detailed, film-quality
+      Pixar/DreamWorks 3D render, 8K. NO text/letters/words/numbers/logos.
     - "video_prompt": a detailed ENGLISH motion prompt describing what the
-      characters DO in this scene (gestures, actions, natural blinking, gentle
-      cute movements, expressions).
-    - "narration_hi": this scene's portion of the Hindi narration (a sentence
-      or two). Joined in order, all narration_hi together = the full Narration.
+      characters DO in this scene (gestures, emotional expressions, movement).
+    - "narration_hi": this scene's portion of the Hindi narration. Joined in
+      order, all narration_hi together = the full Narration.
 
-Constraints: EXACTLY {num_scenes} scenes. Everything family-friendly and
-wholesome. Output valid JSON only.
+Constraints: EXACTLY {num_scenes} scenes. Muli Didi central. Family-safe
+emotional drama. Output valid JSON only.
 """
 
     resp = client.messages.create(
         model=model,
-        max_tokens=4000,
+        max_tokens=6000,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
@@ -1276,10 +1289,14 @@ def render_scene_assets(cfg, scenes, run_id, animate):
     reworded image prompt (for NSFW false-positives) then skipped if it still
     fails. Returns the list of file paths (raises only if NONE succeed).
     """
+    import random
     paths = []
     total = len(scenes)
     kind = "clip" if animate else "image"
     ext = "mp4" if animate else "png"
+    # One seed for every still in a short: with Flux this keeps the recurring
+    # Muli-Didi cast looking consistent from scene to scene.
+    base_seed = random.randint(1, 9_000_000)
     for i, sc in enumerate(scenes, 1):
         img = sc.get("image_prompt", "")
         vid = sc.get("video_prompt", "") or img
@@ -1291,7 +1308,7 @@ def render_scene_assets(cfg, scenes, run_id, animate):
                 if animate:
                     generate_scene_clip(cfg, ip, vid, out)
                 else:
-                    generate_scene_image(cfg, ip, out)
+                    generate_scene_image(cfg, ip, out, base_seed=base_seed)
                 paths.append(out)
                 break
             except Exception as exc:                          # noqa: BLE001
