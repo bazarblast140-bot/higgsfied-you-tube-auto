@@ -135,21 +135,24 @@ SEO_BASE_TAGS = [
 # The channel's SIGNATURE RECURRING CAST — starred (Muli Didi) in EVERY short so
 # the channel has one familiar face, with fixed looks so they stay identical
 # across scenes AND across videos.
-# Every character is spelled out as FULLY CLOTHED on purpose: "wearing a patched
-# kurta" alone made the image models render a bare potato body, which looked
-# wrong and tripped downstream NSFW filters.
+# Full coverage is spelled out per character on purpose. Left vaguer ("wearing a
+# patched kurta", "wearing a saree") the image models rendered a bare potato body
+# and a drape that left the radish woman's pale body bare at the shoulders and
+# arms — off-model, and enough to trip downstream NSFW filters on innocent beats.
 MULI_CAST = (
     "MULI DIDI (the heroine — she MUST appear in every story): a kind, graceful "
     "female radish woman with a long smooth white radish body, a big fresh green "
     "leafy top on her head, large expressive emotional eyes, FULLY CLOTHED in a "
-    "bright pink or red Indian saree that covers her whole body. "
+    "bright pink or red Indian saree worn over a FULL-SLEEVED blouse that "
+    "completely covers her shoulders, arms, neck and whole body, modest "
+    "traditional Indian dress. "
     "GARIB AALU: a poor, humble potato man with a round light-brown potato body, "
-    "sad kind eyes, FULLY CLOTHED in a simple patched beige kurta and dhoti that "
-    "cover his whole body, barefoot. "
+    "sad kind eyes, FULLY CLOTHED in a simple patched beige full-sleeved kurta "
+    "and dhoti that cover his whole body, barefoot. "
     "AMEER BAINGAN: the rich, arrogant one — a shiny purple brinjal man FULLY "
     "CLOTHED in a fancy black suit, with black sunglasses and a gold chain. "
     "Supporting villagers may be a tomato, chilli, carrot or cauliflower person, "
-    "all fully clothed in Indian village clothes."
+    "all fully clothed in modest Indian village clothes."
 )
 
 # SEO for the faceless news shorts.
