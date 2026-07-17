@@ -135,16 +135,21 @@ SEO_BASE_TAGS = [
 # The channel's SIGNATURE RECURRING CAST — starred (Muli Didi) in EVERY short so
 # the channel has one familiar face, with fixed looks so they stay identical
 # across scenes AND across videos.
+# Every character is spelled out as FULLY CLOTHED on purpose: "wearing a patched
+# kurta" alone made the image models render a bare potato body, which looked
+# wrong and tripped downstream NSFW filters.
 MULI_CAST = (
     "MULI DIDI (the heroine — she MUST appear in every story): a kind, graceful "
     "female radish woman with a long smooth white radish body, a big fresh green "
-    "leafy top on her head, large expressive emotional eyes, wearing a bright "
-    "pink or red Indian saree. "
+    "leafy top on her head, large expressive emotional eyes, FULLY CLOTHED in a "
+    "bright pink or red Indian saree that covers her whole body. "
     "GARIB AALU: a poor, humble potato man with a round light-brown potato body, "
-    "sad kind eyes, wearing a simple patched Indian kurta. "
-    "AMEER BAINGAN: the rich, arrogant one — a shiny purple brinjal man in a "
-    "fancy black suit, black sunglasses and a gold chain. "
-    "Supporting villagers may be a tomato, chilli, carrot or cauliflower person."
+    "sad kind eyes, FULLY CLOTHED in a simple patched beige kurta and dhoti that "
+    "cover his whole body, barefoot. "
+    "AMEER BAINGAN: the rich, arrogant one — a shiny purple brinjal man FULLY "
+    "CLOTHED in a fancy black suit, with black sunglasses and a gold chain. "
+    "Supporting villagers may be a tomato, chilli, carrot or cauliflower person, "
+    "all fully clothed in Indian village clothes."
 )
 
 # SEO for the faceless news shorts.
