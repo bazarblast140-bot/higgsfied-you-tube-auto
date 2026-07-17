@@ -73,6 +73,9 @@ CONFIG_PATH   = os.path.join(BASE_DIR, "config.json")
 CLIENT_SECRET = os.path.join(BASE_DIR, "client_secret.json")
 TOKEN_PATH    = os.path.join(BASE_DIR, "token.json")
 MUSIC_DIR     = os.path.join(BASE_DIR, "assets", "music")
+# The Muli shorts are emotional village dramas — the upbeat/hip-hop beds in the
+# music root fought the story, so the shorts draw from the emotional beds only.
+SHORTS_MUSIC_DIR = os.path.join(MUSIC_DIR, "emotional")
 ARCHIVE_DIR   = os.path.join(BASE_DIR, "archive")
 WORK_DIR      = os.path.join(BASE_DIR, "work")          # transient render space
 LOG_DIR       = os.path.join(BASE_DIR, "logs")
@@ -1196,6 +1199,64 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
     return out_path, dur
 
 
+# Breath of silence left after each scene's line, so the cut lands on the pause
+# rather than on top of the next word.
+SCENE_VOICE_GAP_S = 0.35
+
+
+def synthesize_scene_voices(cfg, scenes, out_path):
+    """Voice each scene's OWN line, then join them into one track.
+
+    Returns (out_path, total_duration, [per_scene_duration, ...]).
+
+    The per-scene durations are what keep picture and voice together: each
+    scene is held on screen for exactly as long as its own narration takes.
+    Splitting one long voiceover into equal slices instead is what made the
+    picture drift out of step with the story.
+    """
+    import imageio_ffmpeg
+    from moviepy import AudioFileClip
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    wd = os.path.dirname(out_path) or "."
+    parts, durs, tmp = [], [], []
+
+    for i, sc in enumerate(scenes, 1):
+        line = (sc.get("narration_hi") or "").strip()
+        if not line:
+            line = "..."
+        raw = os.path.join(wd, f"_vo_raw_{i}.mp3")
+        pad = os.path.join(wd, f"_vo_{i}.mp3")
+        tmp += [raw, pad]
+        synthesize_hindi_voice(cfg, line, raw)
+        _run_ffmpeg([ffmpeg, "-y", "-i", raw, "-af",
+                     f"apad=pad_dur={SCENE_VOICE_GAP_S}",
+                     "-c:a", "libmp3lame", "-b:a", "192k", pad])
+        a = AudioFileClip(pad)
+        durs.append(float(a.duration))
+        a.close()
+        parts.append(pad)
+
+    listfile = os.path.join(wd, "_vo_list.txt")
+    tmp.append(listfile)
+    with open(listfile, "w", encoding="utf-8") as f:
+        for p in parts:
+            f.write(f"file '{os.path.abspath(p)}'\n")
+    _run_ffmpeg([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
+                 "-c:a", "libmp3lame", "-b:a", "192k", out_path])
+
+    for p in tmp:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    total = sum(durs)
+    log.info("TTS: %d scene lines voiced (%.1fs total; %s)", len(durs), total,
+             ", ".join(f"{d:.1f}s" for d in durs))
+    return out_path, total, durs
+
+
 # --------------------------------------------------------------------------- #
 #  STEP 2c — Scene images (Higgsfield Soul, 3D Pixar style)
 # --------------------------------------------------------------------------- #
@@ -1298,12 +1359,18 @@ def render_scene_assets(cfg, scenes, run_id, animate):
     """
     Generate one asset per scene — an animated clip (animate=True) or a still
     image (animate=False). `scenes` is a list of dicts with image_prompt /
-    video_prompt. Resilient: each scene is retried once with a wholesome
-    reworded image prompt (for NSFW false-positives) then skipped if it still
-    fails. Returns the list of file paths (raises only if NONE succeed).
+    video_prompt.
+
+    Always returns EXACTLY one asset per scene, in order. A scene is retried
+    with a wholesome reworded prompt (for NSFW false-positives), and if it still
+    fails its neighbour's picture is reused rather than dropping the beat:
+    dropping one left the remaining pictures to absorb the missing scene's
+    narration, which broke both the story order and the voice sync for the whole
+    rest of the video. Raises only if NO scene renders.
     """
     import random
-    paths = []
+    import shutil
+    paths = [None] * len(scenes)
     total = len(scenes)
     kind = "clip" if animate else "image"
     ext = "mp4" if animate else "png"
@@ -1314,7 +1381,7 @@ def render_scene_assets(cfg, scenes, run_id, animate):
         img = sc.get("image_prompt", "")
         vid = sc.get("video_prompt", "") or img
         out = os.path.join(WORK_DIR, f"scene_{run_id}_{i}.{ext}")
-        for attempt, ip in enumerate((img, _safe_prompt(img)), 1):
+        for attempt, ip in enumerate((img, _safe_prompt(img), img), 1):
             try:
                 log.info("Higgsfield: scene %s %d/%d (try %d) ...",
                          kind, i, total, attempt)
@@ -1322,17 +1389,30 @@ def render_scene_assets(cfg, scenes, run_id, animate):
                     generate_scene_clip(cfg, ip, vid, out)
                 else:
                     generate_scene_image(cfg, ip, out, base_seed=base_seed)
-                paths.append(out)
+                paths[i - 1] = out
                 break
             except Exception as exc:                          # noqa: BLE001
                 log.warning("Scene %d try %d failed (%s).", i, attempt,
                             str(exc)[:140])
-        else:
-            log.warning("Scene %d skipped after retries.", i)
 
-    if not paths:
+    if not any(paths):
         raise RuntimeError("All scene assets failed to render.")
-    log.info("Rendered %d/%d scene %ss.", len(paths), total, kind)
+
+    # Fill any hole from the nearest rendered neighbour, so every scene still
+    # has a picture and the beats stay lined up with the narration.
+    for i, p in enumerate(paths):
+        if p:
+            continue
+        donor = next((q for q in reversed(paths[:i]) if q), None) or \
+                next((q for q in paths[i + 1:] if q), None)
+        stand_in = os.path.join(WORK_DIR, f"scene_{run_id}_{i + 1}_fill.{ext}")
+        shutil.copyfile(donor, stand_in)
+        paths[i] = stand_in
+        log.warning("Scene %d unrendered -> reusing %s to keep the beats "
+                    "aligned.", i + 1, os.path.basename(donor))
+
+    log.info("Rendered %d/%d scene %ss.", sum(
+        1 for p in paths if not p.endswith(f"_fill.{ext}")), total, kind)
     return paths
 
 
@@ -1609,8 +1689,50 @@ def render_stock_clips(cfg, prompts, run_id, width=1080, height=1920):
 # --------------------------------------------------------------------------- #
 #  STEP 2d — Assemble the video (images + Ken Burns + voiceover + music)
 # --------------------------------------------------------------------------- #
+# Tracks with a singer fight the narration — a listener hears a second voice
+# under the story. Anything credited "feat." is a vocal track.
+VOCAL_MARKERS = ("feat.", "feat ", "(vocal", "ft.")
+
+
+def pick_music(mdir):
+    """Choose one instrumental bed from `mdir`, or None if it holds nothing usable."""
+    import glob
+    import random
+
+    tracks = []
+    for ext in ("*.mp3", "*.wav", "*.m4a"):
+        tracks += glob.glob(os.path.join(mdir, ext))
+    playable = [t for t in tracks
+                if not any(m in os.path.basename(t).lower()
+                           for m in VOCAL_MARKERS)]
+    if len(playable) < len(tracks):
+        log.info("Skipped %d vocal track(s) in %s.",
+                 len(tracks) - len(playable), os.path.basename(mdir) or mdir)
+    if not playable:
+        log.warning("No instrumental music in %s; voiceover only.", mdir)
+        return None
+    return random.choice(playable)
+
+
+def _music_mix_filter(mvol):
+    """Music bed that ducks itself under the narration.
+
+    sidechaincompress drives the bed down whenever the voice is speaking and
+    lets it swell back in the gaps, so the story stays intelligible without the
+    music having to sit so low it may as well not be there.
+    """
+    return (
+        f"[2:a]volume={mvol},aloop=loop=-1:size=2000000000[mus];"
+        "[1:a]asplit=2[voc][key];"
+        "[mus][key]sidechaincompress=threshold=0.02:ratio=8:attack=5:"
+        "release=400[duck];"
+        "[voc][duck]amix=inputs=2:duration=first:dropout_transition=0[aout]"
+    )
+
+
 def assemble_video(image_paths, voice_path, voice_dur, out_path,
-                   music_dir=None, music_volume=None, width=1080, height=1920):
+                   music_dir=None, music_volume=None, width=1080, height=1920,
+                   durations=None):
     """
     Build a 9:16 slideshow with ffmpeg (fast, native): each image gets a slow
     Ken Burns PAN (via the crop filter on a pre-upscaled still) for an equal
@@ -1634,14 +1756,21 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path,
     SW, SH = int(W * 1.2), int(H * 1.2)   # 1.2x upscale -> headroom for the pan
     fps = 30
     n = max(1, len(image_paths))
-    per = (voice_dur + 1.0) / n    # hold each image a touch past the VO end
+    # Each scene holds for its OWN narration line when the caller measured them;
+    # equal slices are only a fallback for callers that pass one long voiceover.
+    if durations and len(durations) == len(image_paths):
+        pers = list(durations)
+        pers[-1] += 1.0               # let the last picture breathe past the VO
+    else:
+        pers = [(voice_dur + 1.0) / n] * n
     wd = os.path.dirname(out_path) or "."
     tmp = []
 
-    log.info("Assembling slideshow (%d scenes, %.1fs each, %dx%d)...",
-             n, per, W, H)
+    log.info("Assembling slideshow (%d scenes, %s, %dx%d)...",
+             n, " / ".join(f"{p:.1f}s" for p in pers), W, H)
     segs = []
     for i, img in enumerate(image_paths):
+        per = pers[i]
         seg = os.path.join(wd, f"_kb_{i}.mp4")
         tmp.append(seg)
         prog = (f"min(1\\,t/{per:.3f})" if i % 2 == 0
@@ -1665,19 +1794,14 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path,
         for s in segs:
             f.write(f"file '{os.path.abspath(s)}'\n")
 
-    tracks = (glob.glob(os.path.join(mdir, "*.mp3"))
-              + glob.glob(os.path.join(mdir, "*.wav"))
-              + glob.glob(os.path.join(mdir, "*.m4a")))
-    music = random.choice(tracks) if (tracks and mvol > 0) else None
+    music = pick_music(mdir) if mvol > 0 else None
 
     cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
            "-i", voice_path]
     if music:
         cmd += ["-i", music]
         log.info("Background music: %s", os.path.basename(music))
-        cmd += ["-filter_complex",
-                f"[2:a]volume={mvol},aloop=loop=-1:size=2000000000[mus];"
-                "[1:a][mus]amix=inputs=2:duration=first:dropout_transition=0[aout]",
+        cmd += ["-filter_complex", _music_mix_filter(mvol),
                 "-map", "0:v", "-map", "[aout]"]
     else:
         log.warning("No music in %s; voiceover only.", mdir)
@@ -1768,19 +1892,14 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path,
         for s in segs:
             f.write(f"file '{os.path.abspath(s)}'\n")
 
-    tracks = (glob.glob(os.path.join(mdir, "*.mp3"))
-              + glob.glob(os.path.join(mdir, "*.wav"))
-              + glob.glob(os.path.join(mdir, "*.m4a")))
-    music = random.choice(tracks) if (tracks and mvol > 0) else None
+    music = pick_music(mdir) if mvol > 0 else None
 
     cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", listfile,
            "-i", voice_path]
     if music:
         cmd += ["-i", music]
         log.info("Background music: %s", os.path.basename(music))
-        cmd += ["-filter_complex",
-                f"[2:a]volume={mvol},aloop=loop=-1:size=2000000000[mus];"
-                "[1:a][mus]amix=inputs=2:duration=first:dropout_transition=0[aout]",
+        cmd += ["-filter_complex", _music_mix_filter(mvol),
                 "-map", "0:v", "-map", "[aout]"]
     else:
         log.warning("No music in %s; voiceover only.", mdir)
@@ -2027,6 +2146,80 @@ def send_telegram(cfg, message):
 # --------------------------------------------------------------------------- #
 #  Orchestration — one full pipeline run
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+#  QUALITY GATE — audits every finished video before it is published
+# --------------------------------------------------------------------------- #
+def audit_video(video_path, pkg, scene_paths, scene_durs, run_id):
+    """Grade the finished video against the channel's standing quality bar.
+
+    Checks the things that have actually gone wrong on this channel — a story
+    too short to follow, beats reused because a scene failed, a cast member
+    missing, weak SEO, no music — and reports every category to Telegram, so a
+    regression is visible on the notification instead of being found by watching
+    the upload.
+
+    Returns a printable report. It never blocks the upload: a flawed video that
+    ships still teaches more than one that silently never appears.
+    """
+    import glob
+    report, problems = [], []
+
+    def check(label, ok, detail):
+        report.append(f"{'✅' if ok else '⚠️'} {label}: {detail}")
+        if not ok:
+            problems.append(label)
+
+    # 1. LENGTH — a story needs room to land; ~15s reads as nonsense.
+    total = sum(scene_durs) if scene_durs else 0
+    check("Length", 35 <= total <= 70, f"{total:.0f}s (target 40-60s)")
+
+    # 2. SEQUENCE — every beat must have its own picture.
+    fills = sum(1 for p in scene_paths if "_fill." in os.path.basename(p))
+    check("Sequence", fills == 0,
+          "all scenes rendered" if not fills else f"{fills} scene(s) reused")
+
+    # 3. SYNC — each picture is cut to its own line.
+    aligned = len(scene_paths) == len(scene_durs) == len(pkg.get("Scenes", []))
+    check("Voice sync", aligned,
+          f"{len(scene_paths)} scenes / {len(scene_durs)} voiced lines")
+
+    # 4. CAST — Muli Didi leads every story.
+    prompts = " ".join(s.get("image_prompt", "") for s in pkg.get("Scenes", []))
+    muli = sum(1 for s in pkg.get("Scenes", [])
+               if "radish" in s.get("image_prompt", "").lower())
+    check("Muli Didi", muli >= 1, f"in {muli}/{len(pkg.get('Scenes', []))} scenes")
+
+    # 5. HOOK — scene 1 must move, or the scroll never stops.
+    hook_vid = (pkg.get("Scenes") or [{}])[0].get("video_prompt", "")
+    check("Hook", len(hook_vid) > 40, f"{len(hook_vid)} chars of motion")
+
+    # 6. SEO.
+    title, tags = pkg.get("Title", ""), pkg.get("Tags", [])
+    desc = pkg.get("Description", "")
+    check("Title", 20 <= len(title) <= 100, f"{len(title)} chars")
+    check("Tags", len(tags) >= 10, f"{len(tags)} tags")
+    check("Description", len(desc) >= 60, f"{len(desc)} chars")
+
+    # 7. MUSIC — present, and instrumental.
+    beds = [b for ext in ("*.mp3", "*.wav", "*.m4a")
+            for b in glob.glob(os.path.join(SHORTS_MUSIC_DIR, ext))]
+    clean = [b for b in beds if not any(m in os.path.basename(b).lower()
+                                        for m in VOCAL_MARKERS)]
+    check("Music", bool(clean), f"{len(clean)} instrumental bed(s)")
+
+    # 8. FILE.
+    size = os.path.getsize(video_path) / 1e6 if os.path.exists(video_path) else 0
+    check("File", size > 1, f"{size:.1f} MB")
+
+    verdict = ("🟢 QUALITY: all checks passed" if not problems
+               else f"🔴 QUALITY: {len(problems)} issue(s) — "
+                    + ", ".join(problems))
+    text = verdict + "\n" + "\n".join(report)
+    for line in text.splitlines():
+        (log.info if "✅" in line or "🟢" in line else log.warning)(line)
+    return text
+
+
 def run_pipeline():
     """Execute the full pipeline once. Each step is independently guarded."""
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2060,31 +2253,37 @@ def run_pipeline():
                 pkg["Scenes"][0]["narration_hi"] = f"{hook} {first}".strip()
 
         # 2. Hindi voiceover --------------------------------------------- #
-        _, voice_dur = synthesize_hindi_voice(cfg, pkg["Narration"], voice_path)
+        # Voiced line-by-line so every scene can be held for exactly its own
+        # narration -> picture and story stay in step.
+        _, voice_dur, scene_durs = synthesize_scene_voices(
+            cfg, pkg["Scenes"], voice_path)
 
         # 3. Scene visuals + assemble the 40-50s video ------------------- #
-        # Subtle background music (auto-activates once no-copyright tracks are
-        # added to assets/music; voiceover-only until then).
         smv = cfg.get("shorts_music_volume", 0.08)
+        mdir = SHORTS_MUSIC_DIR
         if visual_mode == "stock_video":
             # FREE real stock footage (Pexels/Pixabay) -> motion clips.
             # Higgsfield NEVER hit -> 0 credits. Motion boosts retention.
             scene_paths = render_stock_clips(cfg, pkg["Scenes"], run_id,
                                              width=1080, height=1920)
             assemble_animated_video(scene_paths, voice_path, voice_dur,
-                                    final_video, music_volume=smv)
+                                    final_video, music_dir=mdir,
+                                    music_volume=smv)
         elif animate:
             # Higgsfield DoP animation (free image -> DoP motion). Main path.
             scene_paths = render_scene_assets(cfg, pkg["Scenes"], run_id, True)
             assemble_animated_video(scene_paths, voice_path, voice_dur,
-                                    final_video, music_volume=smv)
+                                    final_video, music_dir=mdir,
+                                    music_volume=smv)
         else:
             # Legacy FREE Pollinations stills + Ken Burns slideshow.
             scene_paths = render_scene_assets(cfg, pkg["Scenes"], run_id, False)
             assemble_video(scene_paths, voice_path, voice_dur, final_video,
-                           music_volume=smv)
+                           music_dir=mdir, music_volume=smv,
+                           durations=scene_durs)
 
-        # 4. Upload ------------------------------------------------------ #
+        # 4. Quality gate + upload --------------------------------------- #
+        audit = audit_video(final_video, pkg, scene_paths, scene_durs, run_id)
         url = upload_to_youtube(cfg, final_video, pkg)
 
         # 5. Notify ------------------------------------------------------ #
@@ -2093,7 +2292,8 @@ def run_pipeline():
             "✅ Shorts uploaded successfully!\n\n"
             f"🎬 Title: {pkg['Title']}\n"
             f"📈 Topic: {trend['topic']} ({trend['source']})\n"
-            f"🔗 {url}",
+            f"🔗 {url}\n\n"
+            f"{audit}",
         )
         # tidy the work dir (keep nothing transient)
         for p in scene_paths + [voice_path, final_video]:
