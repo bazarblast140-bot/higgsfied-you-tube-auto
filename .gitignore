@@ -5,6 +5,7 @@
 *
 !.gitignore
 !ultimate_shorts_agent.py
+!make_muli_video.py
 !requirements.txt
 !topic_bank.json
 !slideshow_topics.json
@@ -14,10 +15,15 @@
 # directory needs its own negation, because git will not descend into an
 # excluded directory to find un-excluded files inside it.
 #
-# Only YouTube Audio Library tracks belong here: they are the one source that
-# carries no Content ID risk for the channel uploading the video.
+# Only two sources belong here, both free of Content ID risk for the channel:
+# YouTube Audio Library tracks, and beds this channel commissioned itself from
+# Higgsfield's Sonilo model (assets/music/emotional/muli_theme_*.mp3).
 !assets/
 !assets/music/
+
+# The cast sheet every Muli scene is drawn from. It lives on the Desktop, so a
+# copy travels with the repo rather than existing only on one laptop.
+!assets/cast_sheet.jpg
 !assets/music/*/
 !assets/music/*/*.mp3
 !assets/music/*/*.m4a
