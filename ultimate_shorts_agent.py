@@ -1833,7 +1833,8 @@ def _run_ffmpeg(cmd):
 
 def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path,
                             width=1080, height=1920,
-                            music_dir=None, music_volume=None):
+                            music_dir=None, music_volume=None,
+                            durations=None):
     """
     Stitch scene VIDEO clips (Higgsfield DoP animation OR free stock footage)
     into the final video. Each clip is processed ONE AT A TIME (memory-safe):
@@ -1856,13 +1857,21 @@ def assemble_animated_video(clip_paths, voice_path, voice_dur, out_path,
     mvol = MUSIC_VOLUME if music_volume is None else music_volume
     W, H, fps = width, height, 30
     n = max(1, len(clip_paths))
-    per = (voice_dur + 1.0) / n
+    # Each clip runs for its OWN narration line when the caller measured them;
+    # equal slices are only a fallback for one undivided voiceover.
+    if durations and len(durations) == len(clip_paths):
+        pers = list(durations)
+        pers[-1] += 1.0
+    else:
+        pers = [(voice_dur + 1.0) / n] * n
     wd = os.path.dirname(out_path) or "."
     tmp = []
 
-    log.info("Stitching %d animated clips (%.1fs each)...", n, per)
+    log.info("Stitching %d animated clips (%s)...", n,
+             " / ".join(f"{p:.1f}s" for p in pers))
     segs = []
     for i, clip in enumerate(clip_paths):
+        per = pers[i]
         seg = os.path.join(wd, f"_seg_{i}.mp4")
         tmp.append(seg)
         # Play the clip once at REAL speed, then FREEZE the last frame to fill
@@ -2268,13 +2277,13 @@ def run_pipeline():
                                              width=1080, height=1920)
             assemble_animated_video(scene_paths, voice_path, voice_dur,
                                     final_video, music_dir=mdir,
-                                    music_volume=smv)
+                                    music_volume=smv, durations=scene_durs)
         elif animate:
             # Higgsfield DoP animation (free image -> DoP motion). Main path.
             scene_paths = render_scene_assets(cfg, pkg["Scenes"], run_id, True)
             assemble_animated_video(scene_paths, voice_path, voice_dur,
                                     final_video, music_dir=mdir,
-                                    music_volume=smv)
+                                    music_volume=smv, durations=scene_durs)
         else:
             # Legacy FREE Pollinations stills + Ken Burns slideshow.
             scene_paths = render_scene_assets(cfg, pkg["Scenes"], run_id, False)
