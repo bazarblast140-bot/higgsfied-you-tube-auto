@@ -1170,18 +1170,44 @@ def _warm_free_image(url):
 # --------------------------------------------------------------------------- #
 #  STEP 2b — Hindi voiceover (free edge-tts)
 # --------------------------------------------------------------------------- #
-def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
-                           _tts_rate_override=None, _tts_pitch_override=None):
-    """Generate a Hindi voiceover mp3 from `narration` (free Microsoft TTS).
-    Returns (out_path, duration_seconds)."""
+# Microsoft's free endpoint intermittently answers a long request with no audio
+# at all ("NoAudioReceived") — most often on a big block of text from a cloud
+# IP, which is exactly the slideshow's ~3000-character narration on the runner.
+# Splitting the narration into smaller pieces and retrying each makes the step
+# reliable, because a piece is far less likely to come back empty and a stray
+# failure costs one retry instead of the whole run.
+TTS_CHUNK_CHARS = 550
+TTS_TRIES = 4
+
+
+def _split_for_tts(text, limit=TTS_CHUNK_CHARS):
+    """Break narration into <=limit-char pieces on sentence-ish boundaries."""
+    import re
+    text = " ".join(text.split())
+    # Hindi danda and western sentence enders, keeping the delimiter attached.
+    sentences = re.split(r"(?<=[।?!.])\s+", text)
+    chunks, cur = [], ""
+    for s in sentences:
+        while len(s) > limit:                 # a single very long sentence
+            cut = s.rfind(" ", 0, limit)
+            cut = cut if cut > 0 else limit
+            chunks.append(s[:cut].strip())
+            s = s[cut:].strip()
+        if len(cur) + len(s) + 1 <= limit:
+            cur = f"{cur} {s}".strip()
+        else:
+            if cur:
+                chunks.append(cur)
+            cur = s
+    if cur:
+        chunks.append(cur)
+    return [c for c in chunks if c.strip()] or [text]
+
+
+def _tts_one(narration, out_path, voice, rate, pitch):
+    """One edge-tts attempt. Raises on an empty/failed result."""
     import asyncio
     import edge_tts
-
-    voice = _tts_voice_override or cfg.get("tts_voice", TTS_VOICE)
-    rate = _tts_rate_override if _tts_rate_override is not None else cfg.get("tts_rate", TTS_RATE)
-    pitch = _tts_pitch_override if _tts_pitch_override is not None else cfg.get("tts_pitch", TTS_PITCH)
-    log.info("TTS: generating Hindi voiceover (%s, rate %s, pitch %s)...",
-             voice, rate, pitch)
 
     async def _run():
         await edge_tts.Communicate(
@@ -1191,7 +1217,66 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise RuntimeError("TTS produced an empty audio file.")
 
+
+def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
+                           _tts_rate_override=None, _tts_pitch_override=None):
+    """Generate a Hindi voiceover mp3 from `narration` (free Microsoft TTS).
+
+    The narration is voiced in small pieces, each retried a few times, then the
+    pieces are joined — so one empty response from Microsoft costs a retry, not
+    the whole video. Returns (out_path, duration_seconds).
+    """
+    import time
+    import imageio_ffmpeg
     from moviepy import AudioFileClip
+
+    voice = _tts_voice_override or cfg.get("tts_voice", TTS_VOICE)
+    rate = _tts_rate_override if _tts_rate_override is not None else cfg.get("tts_rate", TTS_RATE)
+    pitch = _tts_pitch_override if _tts_pitch_override is not None else cfg.get("tts_pitch", TTS_PITCH)
+
+    chunks = _split_for_tts(narration)
+    log.info("TTS: generating Hindi voiceover (%s, rate %s, pitch %s, %d piece%s)...",
+             voice, rate, pitch, len(chunks), "" if len(chunks) == 1 else "s")
+
+    wd = os.path.dirname(out_path) or "."
+    stem = os.path.splitext(os.path.basename(out_path))[0]
+    parts, tmp = [], []
+    for i, chunk in enumerate(chunks):
+        part = out_path if len(chunks) == 1 else os.path.join(
+            wd, f"_tts_{stem}_{i}.mp3")
+        last = None
+        for attempt in range(1, TTS_TRIES + 1):
+            try:
+                _tts_one(chunk, part, voice, rate, pitch)
+                break
+            except Exception as exc:                          # noqa: BLE001
+                last = exc
+                log.warning("TTS piece %d/%d try %d failed (%s); retrying...",
+                            i + 1, len(chunks), attempt, str(exc)[:120])
+                time.sleep(2 * attempt)
+        else:
+            raise RuntimeError(
+                f"TTS failed for piece {i + 1}/{len(chunks)} after "
+                f"{TTS_TRIES} tries: {last}")
+        parts.append(part)
+        if len(chunks) > 1:
+            tmp.append(part)
+
+    if len(chunks) > 1:
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        listfile = os.path.join(wd, f"_tts_{stem}_list.txt")
+        tmp.append(listfile)
+        with open(listfile, "w", encoding="utf-8") as f:
+            for p in parts:
+                f.write(f"file '{os.path.abspath(p)}'\n")
+        _run_ffmpeg([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i",
+                     listfile, "-c:a", "libmp3lame", "-b:a", "192k", out_path])
+        for p in tmp:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
     a = AudioFileClip(out_path)
     dur = float(a.duration)
     a.close()
@@ -2152,6 +2237,29 @@ def send_telegram(cfg, message):
         log.warning("Telegram notification failed: %s", exc)
 
 
+def alert_failure(cfg, message):
+    """Send a failure alert even when the run never got a usable config.
+
+    A crash before load_config() left `cfg` as None, and the old code only
+    notified `if cfg is not None` — so the failures that mattered most (a blank
+    or malformed secret in the cloud) were the ones that stayed silent. This
+    recovers the Telegram credentials from config.json or the environment when
+    `cfg` is missing them, so a failed run always speaks up.
+    """
+    creds = dict(cfg) if isinstance(cfg, dict) else {}
+    if not creds.get("telegram_bot_token") or not creds.get("telegram_chat_id"):
+        try:
+            with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
+                creds = json.load(f)
+        except Exception:                                     # noqa: BLE001
+            pass
+    creds.setdefault("telegram_bot_token",
+                     os.environ.get("TELEGRAM_BOT_TOKEN"))
+    creds.setdefault("telegram_chat_id",
+                     os.environ.get("TELEGRAM_CHAT_ID"))
+    send_telegram(creds, message)
+
+
 # --------------------------------------------------------------------------- #
 #  Orchestration — one full pipeline run
 # --------------------------------------------------------------------------- #
@@ -2317,14 +2425,13 @@ def run_pipeline():
     except Exception as exc:                                  # noqa: BLE001
         log.error("PIPELINE RUN FAILED (id=%s): %s", run_id, exc)
         log.error(traceback.format_exc())
-        if cfg is not None:
-            title = pkg["Title"] if pkg else "(content not generated)"
-            send_telegram(
-                cfg,
-                f"❌ Shorts pipeline FAILED (id={run_id})\n"
-                f"Step content: {title}\n"
-                f"Error: {exc}",
-            )
+        title = pkg["Title"] if pkg else "(content not generated)"
+        alert_failure(
+            cfg,
+            f"❌ Shorts pipeline FAILED (id={run_id})\n"
+            f"Step content: {title}\n"
+            f"Error: {exc}",
+        )
 
 
 def run_news_short_pipeline():
@@ -2396,9 +2503,9 @@ def run_news_short_pipeline():
     except Exception as exc:                                  # noqa: BLE001
         log.error("NEWS SHORT RUN FAILED (id=%s): %s", run_id, exc)
         log.error(traceback.format_exc())
-        if cfg is not None:
-            title = pkg["Title"] if pkg else "(content not generated)"
-            send_telegram(cfg, f"❌ News Short FAILED (id={run_id})\nError: {exc}")
+        title = pkg["Title"] if pkg else "(content not generated)"
+        alert_failure(cfg, f"❌ News Short FAILED (id={run_id})\n"
+                           f"Content: {title}\nError: {exc}")
 
 
 def run_slideshow_pipeline():
@@ -2469,8 +2576,7 @@ def run_slideshow_pipeline():
     except Exception as exc:                                  # noqa: BLE001
         log.error("SLIDESHOW RUN FAILED (id=%s): %s", run_id, exc)
         log.error(traceback.format_exc())
-        if cfg is not None:
-            send_telegram(cfg, f"❌ Slideshow FAILED (id={run_id})\nError: {exc}")
+        alert_failure(cfg, f"❌ Slideshow FAILED (id={run_id})\nError: {exc}")
 
 
 # --------------------------------------------------------------------------- #
