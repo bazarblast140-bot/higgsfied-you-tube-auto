@@ -141,6 +141,12 @@ IMG_GEN_MEGAPIXELS   = 1.3
 # noticeably more closely and costs more per image — switch via hf_image_model.
 HF_IMAGE_MODEL       = "black-forest-labs/FLUX.1-schnell"
 
+# How many of the cast may share one frame. Diffusion models bind attributes to
+# subjects poorly, and the error grows fast with the head count — at four to six
+# characters the vegetables swap heads and clothes outright. Two holds. Raise
+# this only on a model with stronger multi-subject binding (FLUX.1-dev).
+MAX_CHARS_PER_SCENE  = 2
+
 # Reach / SEO — niche hashtags appended to every description, and base keywords
 # merged into tags so YouTube surfaces the video in search + suggested.
 SEO_HASHTAGS = [
@@ -690,6 +696,12 @@ Return ONLY a JSON object with EXACTLY these keys:
 - "Scenes": an array of EXACTLY {num_scenes} objects, in order, each with:
     - "characters": an array of the cast IDS visible in this beat, e.g.
       ["muli_didi", "garib_aalu"]. Use the exact ids listed above, nothing else.
+      AT MOST {MAX_CHARS_PER_SCENE} ids per scene, and prefer just one. This is
+      a hard visual limit, not a style note: with more bodies in one frame the
+      image model swaps their heads and clothes around and the cast stops
+      looking like itself. Write the beat so it needs only one or two of them
+      on screen — a crowd scene must be staged as a close-up on whoever the
+      narration is about.
     - "action": ONE English sentence describing ONLY what is happening in this
       frame — the pose, the emotion on their faces, the village location, the
       props, the camera framing. Do NOT describe what the characters look like,
@@ -1063,10 +1075,23 @@ def build_scene_prompt(characters, action, flavor):
 
     `characters` are MULI_CAST_SHEET keys; unknown names are dropped, and an
     empty result falls back to the heroine so a frame is never castless.
+
+    The list is also capped at MAX_CHARS_PER_SCENE. Every extra body in one
+    prompt makes the model blend their traits: the first uploaded video put
+    four to six of the cast in a frame and came back with Muli's radish head
+    growing on Aalu's shoulders and Muli herself drawn as an ordinary woman,
+    while the two-character test frames held together. Locking the wording
+    stops the writer drifting; it cannot stop the model mixing up a crowd, so
+    the crowd has to go.
     """
     ids = [c for c in (characters or []) if c in MULI_CAST_SHEET]
     if not ids:
         ids = ["muli_didi"]
+    if len(ids) > MAX_CHARS_PER_SCENE:
+        log.warning("Scene asked for %d characters; keeping the first %d to "
+                    "stop the model blending their looks.",
+                    len(ids), MAX_CHARS_PER_SCENE)
+        ids = ids[:MAX_CHARS_PER_SCENE]
     seen, looks = set(), []
     for c in ids:                              # de-dupe, keep the writer's order
         if c not in seen:
