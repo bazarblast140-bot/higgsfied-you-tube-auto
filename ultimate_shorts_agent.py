@@ -99,8 +99,10 @@ HIGGSFIELD_API = {
     "text2image_path":  "/v1/text2image/soul",         # step 1: prompt -> image
     "image2video_path": "/v1/image2video/dop",         # step 2: image -> video
     "status_path":      "/v1/job-sets/{request_id}",   # poll job set here
-    # Soul accepts only these exact sizes; 1152x2048 is 9:16 vertical (Shorts).
-    "image_size":       "1152x2048",
+    # Soul accepts only these exact sizes; 1152x2048 is 9:16 vertical (Shorts),
+    # 2048x1152 the 16:9 landscape the slideshow videos need.
+    "image_size":           "1152x2048",
+    "image_size_landscape": "2048x1152",
     # DoP model: one of 'dop-lite', 'dop-preview', 'dop-turbo'.
     "video_model":      "dop-turbo",
     "poll_interval_s":  6,                              # how often to poll
@@ -122,6 +124,23 @@ SLIDESHOW_PITCH      = "+0Hz"
 SLIDESHOW_MUSIC_VOLUME = 0.09           # under the voiceover; 0.18 drowned the narration
 FREE_IMAGE_DELAY_S   = 3                # gap between free-image calls (avoid rate-limit)
 
+# Flux is trained around one megapixel. Asking Pollinations for the final
+# 1080x1920 is 2.07 MP — nearly DOUBLE — and generating that far above a
+# diffusion model's training resolution is what produces the broken frames on
+# this channel: duplicated limbs, two heads, melted faces. It bought nothing
+# either, because assemble_video rescales every still to its 1.2x pan canvas
+# regardless. So generate inside the model's comfortable budget and let ffmpeg
+# do the enlarging: a clean small image upscaled beats a broken big one.
+# Lower this to ~0.9 if artefacts ever come back; raise it for more detail.
+IMG_GEN_MEGAPIXELS   = 1.3
+
+# Hugging Face Inference Providers — the image source after Pollinations' free
+# tier closed. schnell is the fast, cheap, 4-step distilled FLUX; its prompt
+# adherence is the weaker part of the pipeline (it is what still lets a face
+# drift between scenes). "black-forest-labs/FLUX.1-dev" follows the cast sheet
+# noticeably more closely and costs more per image — switch via hf_image_model.
+HF_IMAGE_MODEL       = "black-forest-labs/FLUX.1-schnell"
+
 # Reach / SEO — niche hashtags appended to every description, and base keywords
 # merged into tags so YouTube surfaces the video in search + suggested.
 SEO_HASHTAGS = [
@@ -142,25 +161,86 @@ SEO_BASE_TAGS = [
 # patched kurta", "wearing a saree") the image models rendered a bare potato body
 # and a drape that left the radish woman's pale body bare at the shoulders and
 # arms — off-model, and enough to trip downstream NSFW filters on innocent beats.
-MULI_CAST = (
-    "MULI DIDI (the heroine — she MUST appear in every story): a kind, graceful "
-    "female radish woman with a smooth white radish body, a big fresh green "
-    "leafy top on her head, large expressive emotional eyes, FULLY CLOTHED in a "
-    "pink Indian saree over a full-sleeved blouse covering her shoulders, arms "
-    "and whole body. "
-    "GARIB AALU (her husband): a poor, humble potato man with a round "
-    "light-brown potato body, sad kind eyes, FULLY CLOTHED in a patched beige "
-    "kurta and dhoti, barefoot. "
-    "AMEER BAINGAN (the rich villain): a shiny purple brinjal man FULLY CLOTHED "
-    "in a black suit, with black sunglasses and a thick gold chain. "
-    "MULI'S CHILDREN: two small cute radish kids with little green leafy tops, "
-    "fully clothed in simple beige village clothes. "
-    "TAMATAR: a cheerful red tomato man in a green kurta. "
-    "LAHSUN: a wise old white garlic man with a long white beard, in a white "
-    "kurta. "
-    "MIRCH: a fiery green chilli woman in a yellow saree. "
-    "PYAAZ: a purple onion man in an orange kurta. "
-    "Everyone is fully clothed in Indian village clothes."
+# Keyed per character so the exact same words can be pasted into every scene
+# prompt. See build_scene_prompt for why this must not be left to the writer.
+#
+# Two things are deliberate in the wording, both learned from watching frames
+# come back wrong:
+#   * "a potato man" got read as "a poor MAN" and rendered an ordinary human
+#     boy with no vegetable anywhere. Every entry now says outright that the
+#     head IS the vegetable and the character is NOT human.
+#   * Anything left unstated drifts between scenes — skin tone, eye colour and
+#     hair changed shot to shot while the clothes (which WERE stated) stayed
+#     put. So every fixed detail a viewer would notice is pinned here.
+MULI_CAST_SHEET = {
+    "muli_didi": (
+        "MULI DIDI: a female RADISH character, NOT a human — her head IS a "
+        "smooth white radish, and she alone has a big fresh green leafy top "
+        "growing from the crown of her head. Pure white radish skin, large "
+        "round dark brown eyes, long black eyelashes, a small red bindi, and a "
+        "bare smooth white scalp under the leaves. She wears a bright pink "
+        "Indian saree over a full-sleeved blouse covering her shoulders, arms "
+        "and whole body, barefoot."
+    ),
+    "garib_aalu": (
+        "GARIB AALU (her husband): a male POTATO character, NOT a human — his "
+        "head and body ARE a big round light-brown potato, entirely covered in "
+        "rough brown potato skin with small potato eye-dimples, and the top of "
+        "his potato head is completely smooth and bare. Small sad black eyes, "
+        "thick black eyebrows, a drooping black moustache. He wears a "
+        "long-sleeved patched beige kurta buttoned to the neck that covers his "
+        "whole torso and arms, and a matching beige dhoti, barefoot."
+    ),
+    "ameer_baingan": (
+        "AMEER BAINGAN (the rich villain): a male BRINJAL character, NOT a "
+        "human — his head and body ARE a shiny deep-purple eggplant with a "
+        "small green stalk cap on top. Narrow eyes, a thin black moustache. "
+        "FULLY CLOTHED in a black suit, with black sunglasses and a thick gold "
+        "chain."
+    ),
+    "muli_children": (
+        "MULI'S CHILDREN: two small RADISH kids, NOT humans — each head IS a "
+        "little white radish with a small green leafy top, white radish skin, "
+        "big round dark brown eyes and a bare smooth white scalp under the "
+        "leaves. Fully clothed in simple beige village clothes, barefoot."
+    ),
+    "tamatar": (
+        "TAMATAR: a male TOMATO character, NOT a human — his head and body ARE "
+        "a round bright red tomato with a small green stalk on top, cheerful "
+        "round black eyes. Fully clothed in a green kurta."
+    ),
+    "lahsun": (
+        "LAHSUN: an old male GARLIC character, NOT a human — his head IS a "
+        "white garlic bulb, with a long flowing white beard and kind wrinkled "
+        "eyes. Fully clothed in a white kurta."
+    ),
+    "mirch": (
+        "MIRCH: a female GREEN CHILLI character, NOT a human — her head and "
+        "body ARE a long curved bright green chilli with a small stalk on top, "
+        "fiery angular eyes. Fully clothed in a yellow saree."
+    ),
+    "pyaaz": (
+        "PYAAZ: a male ONION character, NOT a human — his head and body ARE a "
+        "round purple onion with papery purple skin and thin green shoots on "
+        "top. Fully clothed in an orange kurta."
+    ),
+}
+
+# The whole sheet as one block — what the WRITER reads to plot the story.
+MULI_CAST = " ".join(MULI_CAST_SHEET.values()) + \
+    " Everyone is fully clothed in Indian village clothes."
+
+# Pasted byte-identical in front of / behind every Shorts scene prompt.
+SHORTS_STYLE_LOCK = (
+    "3D Pixar-style cartoon animation, film-quality Pixar/DreamWorks 3D render, "
+    "cute-but-expressive vegetable characters with big emotional eyes, Indian "
+    "village setting, volumetric cinematic lighting, ultra-detailed. "
+)
+SHORTS_TAIL_LOCK = (
+    " Vertical 9:16 composition. One single clean frame: exactly one of each "
+    "character, correct anatomy, one head and two arms each, no duplicated or "
+    "merged figures, no extra limbs, no distorted faces. Everyone fully "
+    "clothed. No text, no letters, no words, no numbers, no logos, no watermark."
 )
 
 # SEO for the faceless news shorts.
@@ -216,10 +296,15 @@ SLIDESHOW_IMG_STYLE = (
     "focus, depth of field, 8k, atmospheric and terrifying. "
 )
 SLIDESHOW_IMG_QUALITY = (
-    " Masterpiece quality, hyper-detailed, consistent character design across "
-    "the whole story. Spooky and eerie but NOT graphic: absolutely no blood, no "
-    "gore, no wounds, no zombie — a ghostly, atmospheric scare suitable for a "
-    "family audience. Absolutely no text, no letters, no watermark, no logo."
+    " WIDE 16:9 landscape composition, dark Indian village at night, moonlight, "
+    "fog, deep shadows. Masterpiece quality, hyper-detailed, consistent "
+    "character design across the whole story. One single clean frame: exactly "
+    "one of each person, correct human anatomy, one head, two arms and two "
+    "hands each, five fingers per hand, no duplicated or merged figures, no "
+    "extra limbs, no melted or distorted faces. Spooky and eerie but NOT "
+    "graphic: absolutely no blood, no gore, no wounds, no zombie — a ghostly, "
+    "atmospheric scare suitable for a family audience. Absolutely no text, no "
+    "letters, no watermark, no logo."
 )
 SLIDESHOW_HASHTAGS = [
     "#horrorstory", "#chudail", "#bhootkikahani", "#hindihorror", "#kahani",
@@ -574,13 +659,14 @@ this premise:
 
 PREMISE: "{topic}"
 
-RECURRING CAST — use these EXACT characters and looks (do not invent new looks):
+RECURRING CAST — use these EXACT characters (ids in brackets):
+{_cast_id_list()}
+
+Full looks (for your understanding only — do NOT rewrite them anywhere):
 {MULI_CAST}
 
 Rules:
-- MULI DIDI must be central to the story. Use the fixed cast above; every scene's
-  image_prompt must copy the FULL look (verbatim) of whichever characters appear,
-  so they stay identical across scenes and across videos.
+- MULI DIDI must be central to the story. Use only the fixed cast above.
 - Style: cinematic 3D Pixar-style cartoon, vertical 9:16, Indian village, warm
   emotional lighting. Visual mood for THIS video: {flavor}.
 - Story arc across the {num_scenes} scenes: setup -> an emotional turn (sacrifice,
@@ -602,13 +688,15 @@ Return ONLY a JSON object with EXACTLY these keys:
 - "Narration": the FULL story narration as ONE flowing Hindi paragraph (the
   spoken voiceover — no scene labels, no English, no stage directions).
 - "Scenes": an array of EXACTLY {num_scenes} objects, in order, each with:
-    - "image_prompt": a detailed ENGLISH image prompt. It MUST start with
-      "3D Pixar-style cartoon animation," then COPY the full verbatim look of the
-      character(s) in this beat from the cast above, describe this scene in an
-      Indian village, and end with "vertical 9:16 composition". Make it premium:
-      cute-but-expressive vegetable characters with big emotional eyes, wearing
-      Indian clothes, volumetric cinematic lighting, ultra-detailed, film-quality
-      Pixar/DreamWorks 3D render, 8K. NO text/letters/words/numbers/logos.
+    - "characters": an array of the cast IDS visible in this beat, e.g.
+      ["muli_didi", "garib_aalu"]. Use the exact ids listed above, nothing else.
+    - "action": ONE English sentence describing ONLY what is happening in this
+      frame — the pose, the emotion on their faces, the village location, the
+      props, the camera framing. Do NOT describe what the characters look like,
+      their colours, their bodies or their clothes, and do NOT mention art style,
+      render quality or aspect ratio: all of that is added automatically and
+      must stay identical in every scene. Keep exactly the cast listed in
+      "characters" in frame — no extra background people.
     - "video_prompt": a detailed ENGLISH motion prompt describing what the
       characters DO in this scene (gestures, emotional expressions, movement).
     - "narration_hi": this scene's portion of the Hindi narration. Joined in
@@ -655,12 +743,23 @@ emotional drama. Output valid JSON only.
         data["Description"] = desc + "\n\n" + " ".join(add)
 
     # Scenes -> list of {image_prompt, video_prompt, narration_hi}.
+    # The image prompt is ASSEMBLED HERE from the locked blocks, not taken from
+    # the model — that is what keeps the cast identical scene to scene. A model
+    # that ignored the schema and sent a whole prompt anyway is still honoured
+    # (better an off-style frame than a dropped beat), just logged as a miss.
     scenes = []
     for sc in data["Scenes"]:
         if not isinstance(sc, dict):
             continue
-        img = str(sc.get("image_prompt") or sc.get("visual_prompt") or "").strip()
-        vid = str(sc.get("video_prompt") or "").strip() or img
+        action = str(sc.get("action") or "").strip()
+        if action:
+            img = build_scene_prompt(sc.get("characters"), action, flavor)
+        else:
+            img = str(sc.get("image_prompt") or sc.get("visual_prompt") or "").strip()
+            if img:
+                log.warning("Scene came back as a freehand prompt, not "
+                            "characters+action — cast may drift on this frame.")
+        vid = str(sc.get("video_prompt") or "").strip() or action or img
         nar = str(sc.get("narration_hi") or "").strip()
         if img:
             scenes.append({"image_prompt": img, "video_prompt": vid,
@@ -856,16 +955,18 @@ Return ONLY a JSON object with EXACTLY these keys:
   labels, no headings.
 - "Scenes": an array of EXACTLY {n} objects, IN THE SAME ORDER as the story is
   narrated, so each image shows exactly what the narration is talking about at
-  that moment. Each object has ONE key "visual_prompt": a detailed ENGLISH image
-  prompt for that beat. CRITICAL RULES for every visual_prompt:
-    * Whichever character(s) appear in this beat, describe them by COPYING their
-      full "look" sentence VERBATIM into the prompt, so the same person looks
-      identical in every scene they appear in. Never invent a new appearance.
-    * Show the character the narration is currently about — if the story is
-      following the farmer here, the farmer is in this frame; when the chudail
-      appears in the story, she appears here.
-    * Set it in a dark Indian village/rural night: moonlight, fog, deep shadows,
-      WIDE 16:9 landscape composition. NO text, letters, numbers or logos.
+  that moment. Each object has:
+    - "characters": an array of the "name" values (from Characters above) who
+      are visible in this beat. Show whoever the narration is following right
+      now — the farmer while the story follows him, the chudail once she
+      appears. Use the names exactly as spelled in Characters.
+    - "action": ONE English sentence describing ONLY what happens in this frame
+      — the pose, the expression, where they are in the dark Indian village at
+      night, the props, the camera framing. Do NOT describe what anyone looks
+      like (age, face, hair, skin, clothes) and do NOT mention art style, render
+      quality or aspect ratio: their "look" sentences and the style are pasted
+      in automatically, word for word, so the same person stays the same person
+      in every scene. Rewriting them is what makes the face change.
 
 Constraints: Narration in Hindi about {words} words. EXACTLY {n} scenes, in
 narration order. Output valid JSON only.
@@ -890,11 +991,16 @@ narration order. Output valid JSON only.
         if key not in data or not data[key]:
             raise ValueError(f"Claude slideshow response missing key: {key}")
 
-    cast = ", ".join(
-        f"{c.get('name', '?')} ({c.get('look', '')})"
-        for c in data["Characters"] if isinstance(c, dict)
-    )
-    log.info("Cast: %s", cast[:400])
+    # {lowercased name: look} — the single source of truth for how each person
+    # is worded, reused verbatim in every beat they appear in.
+    cast_map = {}
+    for c in data["Characters"]:
+        if isinstance(c, dict) and str(c.get("name", "")).strip() \
+                and str(c.get("look", "")).strip():
+            cast_map[str(c["name"]).strip().lower()] = str(c["look"]).strip()
+    if not cast_map:
+        raise ValueError("Slideshow response produced no usable characters.")
+    log.info("Cast: %s", ", ".join(cast_map)[:400])
 
     # Assemble the channel's title convention, trimming the hook if the whole
     # thing would blow past YouTube's 100-character limit.
@@ -904,18 +1010,90 @@ narration order. Output valid JSON only.
     data["Tags"] = _normalize_tags(data["Tags"], SLIDESHOW_TAGS)
     data["Description"] = _add_hashtags_to_description(data["Description"], SLIDESHOW_HASHTAGS)
 
-    prompts = []
+    # Prompts are ASSEMBLED HERE from the cast sheet, not taken from the writer.
+    # A scene that came back as a freehand visual_prompt is still used so the
+    # story keeps its beat, but it is the one frame that can drift.
+    prompts, freehand = [], 0
     for sc in data["Scenes"]:
-        vp = sc.get("visual_prompt") if isinstance(sc, dict) else sc
-        if vp and str(vp).strip():
-            prompts.append(str(vp).strip())
+        if not isinstance(sc, dict):
+            if str(sc).strip():
+                prompts.append(str(sc).strip())
+                freehand += 1
+            continue
+        action = str(sc.get("action") or "").strip()
+        if action:
+            prompts.append(build_slide_prompt(cast_map, sc.get("characters"),
+                                              action))
+        elif str(sc.get("visual_prompt") or "").strip():
+            prompts.append(str(sc["visual_prompt"]).strip())
+            freehand += 1
     if not prompts:
         raise ValueError("Slideshow response produced no scene prompts.")
+    if freehand:
+        log.warning("%d/%d slides came back as freehand prompts instead of "
+                    "characters+action — those faces may drift.",
+                    freehand, len(prompts))
     data["ScenePrompts"] = prompts
 
     log.info("Slideshow story ready. Title: %s | %d scenes | narration %d chars",
              data["Title"], len(prompts), len(str(data["Narration"])))
     return data
+
+
+def _cast_id_list():
+    """The cast as `id — NAME` lines, so the writer picks ids it cannot misspell
+    into a character that then gets silently dropped from the frame."""
+    return "\n".join(
+        f"  {cid} — {look.split(':', 1)[0]}"
+        for cid, look in MULI_CAST_SHEET.items()
+    )
+
+
+def build_scene_prompt(characters, action, flavor):
+    """Assemble one Shorts scene prompt out of LOCKED blocks.
+
+    Consistency does not come from the seed — Flux rebuilds the whole image from
+    the prompt, so when the writer paraphrases a character (the full description
+    in scene 1, then just "radish woman in a pink saree" by scene 4) the model
+    draws a different person. Telling the writer to copy the look "verbatim"
+    never held: paraphrasing is what language models do. So the writer no longer
+    authors the prompt at all. It names which cast members are in the beat and
+    what happens; the style and the character wording are pasted in here,
+    identical to the character, for every scene of every video.
+
+    `characters` are MULI_CAST_SHEET keys; unknown names are dropped, and an
+    empty result falls back to the heroine so a frame is never castless.
+    """
+    ids = [c for c in (characters or []) if c in MULI_CAST_SHEET]
+    if not ids:
+        ids = ["muli_didi"]
+    seen, looks = set(), []
+    for c in ids:                              # de-dupe, keep the writer's order
+        if c not in seen:
+            seen.add(c)
+            looks.append(MULI_CAST_SHEET[c])
+    return (SHORTS_STYLE_LOCK + f"Colour mood: {flavor}. " + " ".join(looks)
+            + " SCENE: " + str(action).strip().rstrip(".") + "." + SHORTS_TAIL_LOCK)
+
+
+def build_slide_prompt(cast_map, characters, action):
+    """The slideshow's equivalent of build_scene_prompt — same reasoning.
+
+    `cast_map` is {name: look} built from the story's own Characters list, so
+    each character's one look sentence is reused word for word in every beat
+    they appear in instead of being re-described by the writer each time.
+    """
+    seen, looks = set(), []
+    for n in (characters or []):
+        key = str(n).strip().lower()
+        if key in cast_map and key not in seen:
+            seen.add(key)
+            looks.append(cast_map[key])
+    body = " ".join(looks)
+    if body:
+        body += " "
+    return (SLIDESHOW_IMG_STYLE + body + "SCENE: "
+            + str(action).strip().rstrip(".") + "." + SLIDESHOW_IMG_QUALITY)
 
 
 def _normalize_tags(tags, base_tags):
@@ -1147,16 +1325,132 @@ def _download_url(url, out_path):
                 f.write(chunk)
 
 
-def _free_image_url(prompt, seed=None, width=1080, height=1920):
-    """Public image URL from the FREE Pollinations.ai (Flux) generator — no key,
-    no cost. Deterministic per (prompt, seed). Default 9:16; pass width/height
-    for other aspect ratios (e.g. 1920x1080 for 16:9)."""
+def _gen_dims(width, height):
+    """Shrink a requested frame size to Flux's comfortable pixel budget, keeping
+    the aspect ratio and snapping both sides to a multiple of 16.
+
+    Diffusion models work on a 16-pixel latent grid and are trained near one
+    megapixel; an off-grid or far-oversized request is what smears edges and
+    duplicates anatomy. 1080x1920 comes back as 848x1520 (1.29 MP).
+    """
+    import math
+    budget = IMG_GEN_MEGAPIXELS * 1_000_000
+    pixels = max(1, width * height)
+    f = 1.0 if pixels <= budget else math.sqrt(budget / pixels)
+    w = max(256, int(round(width * f / 16)) * 16)
+    h = max(256, int(round(height * f / 16)) * 16)
+    return w, h
+
+
+def _free_image_url(prompt, seed=None, width=1080, height=1920, token=""):
+    """Image URL from Pollinations.ai.
+
+    Measured 2026-07-19, reproducibly and after a cooldown so it is not a rate
+    limit: the ANONYMOUS tier serves a plain request (200, 768x768 jpeg) but
+    answers ANY width/height/seed/model request with
+        502 "Gen Sana request failed with 402: API key budget too low"
+    i.e. those parameters route to a paid model this app has no key for. The
+    old URL always sent all four, so every image request now fails outright.
+
+    So without a token we ask for nothing but the prompt and take the 768x768
+    square the free tier gives. With `pollinations_token` in config.json the
+    full sized + seeded request is used, which is the only way to get a real
+    1080x1920 frame — and the only way the shared seed does anything at all.
+
+    width/height are the FINAL frame size wanted; the request is made at the
+    model's native budget via _gen_dims and enlarged later by ffmpeg.
+    """
     from urllib.parse import quote
     import random
+    url = "https://image.pollinations.ai/prompt/" + quote(prompt)
+    if not token:
+        return url + "?nologo=true"          # nologo is free; the rest are not
     if seed is None:
         seed = random.randint(1, 9_000_000)
-    return ("https://image.pollinations.ai/prompt/" + quote(prompt)
-            + f"?width={width}&height={height}&nologo=true&model=flux&seed={seed}")
+    gw, gh = _gen_dims(width, height)
+    return (url + f"?width={gw}&height={gh}&nologo=true&model=flux&seed={seed}"
+            + f"&token={quote(token)}")
+
+
+def _hugging_face_image(cfg, prompt, out_path, width, height, seed=None):
+    """Render one image through Hugging Face Inference Providers, straight to
+    out_path. Returns True on success.
+
+    This is the replacement for Pollinations, whose free tier stopped serving
+    new generations on 2026-07-19 (it now answers anything that is not already
+    in its cache with "402 API key budget too low" — a single extra space in a
+    known-good prompt is enough to fail it, so no prompt wording brings it
+    back). HF still honours width/height/seed, which Pollinations' free path
+    never did, so this is also the first provider on which the shared seed does
+    anything at all.
+
+    Note this is metered against the account's inference credits, so a run that
+    starts failing here is far more likely to be an exhausted allowance than a
+    bug — the error text says so and is logged in full.
+    """
+    from huggingface_hub import InferenceClient
+    token = (cfg.get("hf_token") or "").strip()
+    if not token:
+        raise RuntimeError("hf_token missing in config.json.")
+    client = InferenceClient(
+        provider=cfg.get("hf_provider", "nscale"), api_key=token)
+    gw, gh = _gen_dims(width, height)
+    kwargs = {"width": gw, "height": gh}
+    if seed is not None:
+        kwargs["seed"] = seed
+    img = client.text_to_image(
+        prompt, model=cfg.get("hf_image_model", HF_IMAGE_MODEL), **kwargs)
+    img.save(out_path)
+    return True
+
+
+def _hf_image_url(cfg, prompt, width, height):
+    """One Higgsfield Soul text2image render -> the finished image URL.
+
+    Soul only accepts a fixed set of sizes, so the orientation of the frame the
+    caller wants picks between the vertical and the landscape one rather than
+    the exact pixels being requested.
+    """
+    A = HIGGSFIELD_API
+    api_key = (cfg.get("higgsfield_api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError("higgsfield_api_key missing in config.json.")
+    size = (cfg.get("higgsfield_image_size") or A["image_size"]) \
+        if height >= width else A["image_size_landscape"]
+    return _hf_submit_and_wait(
+        A,
+        {"Authorization": f"Key {api_key}", "Content-Type": "application/json"},
+        A["text2image_path"],
+        {"prompt": prompt, "width_and_height": size},
+        kind="image",
+    )
+
+
+def _looks_like_image(path, min_side=256):
+    """True only if the file decodes as a COMPLETE image of a sane size.
+
+    A byte-count check is not enough: Pollinations answers a rate-limit or a
+    content block with a small stub or a truncated body, and those sailed past
+    the old `> 5000 bytes` test straight into the finished video.
+    """
+    try:
+        if os.path.getsize(path) <= 5000:
+            return False
+    except OSError:
+        return False
+    try:
+        from PIL import Image
+    except ImportError:                       # Pillow missing -> size check only
+        return True
+    try:
+        with Image.open(path) as im:
+            im.verify()                       # catches truncated / corrupt data
+        with Image.open(path) as im:          # verify() leaves the handle spent
+            im.load()
+            w, h = im.size
+        return w >= min_side and h >= min_side
+    except Exception:                                         # noqa: BLE001
+        return False
 
 
 def _warm_free_image(url):
@@ -1353,31 +1647,46 @@ def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920,
     """Render one image (default 9:16; pass width/height for 16:9 etc.) and
     download it to out_path.
 
-    FREE Pollinations only. A failure here is nearly always transient — the free
-    tier rate-limits or returns a stub — so retry with a fresh seed rather than
-    falling back to Higgsfield: those credits are spent, so the fallback only
-    ever added a slow 403 to every miss (six slides were lost that way in the
-    last slideshow) and could silently start charging again if topped up.
+    Provider comes from cfg["image_provider"]:
+      "higgsfield"  — Soul text2image. Costs credits, but it is the only source
+                      that returns a real 1152x2048 vertical frame.
+      "pollinations"/"free" — the free tier. Measured 2026-07-19: it serves a
+                      short prompt as a 768x768 square and answers anything
+                      longer, sized or seeded with "402 API key budget too low".
+                      Every prompt this agent builds is far past that, so this
+                      path now fails outright unless pollinations_token is set.
 
-    `base_seed`, when given, is used on the first try so that every scene in one
-    video shares a seed — with Flux that keeps the characters' faces and the
-    overall look consistent from scene to scene. Retries fall back to a random
-    seed, since the same seed tends to fail the same way.
+    `base_seed`, when given, is shared by every scene in one video. On its own a
+    shared seed does NOT hold a character's face steady — Flux re-derives the
+    whole image from the prompt, so a reworded description draws a different
+    person no matter what the seed is. It only pays off once the prompt itself
+    is locked (see build_scene_prompt): near-identical prompt + identical seed
+    keeps the denoising path close, and the cast stays recognisable. Retries
+    step the seed by one rather than randomising it, so a rerun is reproducible
+    and a stuck generation still gets a way out.
     """
     import random
     import time as _time
 
+    provider = (cfg.get("image_provider") or "huggingface").strip().lower()
     last = None
     for attempt in range(1, FREE_IMAGE_TRIES + 1):
         try:
-            seed = (base_seed if attempt == 1 and base_seed is not None
+            seed = ((base_seed + attempt - 1) if base_seed is not None
                     else random.randint(1, 9_000_000))
-            url = _free_image_url(visual_prompt, seed=seed,
-                                  width=width, height=height)
-            _download_url(url, out_path)
-            if os.path.exists(out_path) and os.path.getsize(out_path) > 5000:
+            if provider in ("huggingface", "hf"):
+                _hugging_face_image(cfg, visual_prompt, out_path,
+                                    width, height, seed=seed)
+            elif provider == "higgsfield":
+                _download_url(_hf_image_url(cfg, visual_prompt, width, height),
+                              out_path)
+            else:
+                _download_url(_free_image_url(
+                    visual_prompt, seed=seed, width=width, height=height,
+                    token=cfg.get("pollinations_token", "").strip()), out_path)
+            if _looks_like_image(out_path):
                 return out_path
-            last = "the image came back empty"
+            last = "the download was not a complete image"
         except Exception as exc:                              # noqa: BLE001
             last = str(exc)[:120]
 
@@ -1459,8 +1768,10 @@ def render_scene_assets(cfg, scenes, run_id, animate):
     total = len(scenes)
     kind = "clip" if animate else "image"
     ext = "mp4" if animate else "png"
-    # One seed for every still in a short: with Flux this keeps the recurring
-    # Muli-Didi cast looking consistent from scene to scene.
+    # One seed for every still in a short. This only holds the cast together
+    # because build_scene_prompt already locked the wording, so consecutive
+    # prompts differ by one clause; a shared seed on freely-worded prompts did
+    # nothing at all.
     base_seed = random.randint(1, 9_000_000)
     for i, sc in enumerate(scenes, 1):
         img = sc.get("image_prompt", "")
@@ -1504,21 +1815,31 @@ def render_scene_assets(cfg, scenes, run_id, animate):
 def _safe_prompt(prompt):
     """
     Reword a scene image prompt to dodge over-eager NSFW filters WITHOUT losing
-    the cute kids (they are the whole point of the channel) — just prepend strong
-    wholesome/stylised framing so the filter reads it as harmless cartoon art.
+    the cute kids (they are the whole point of the channel) — add a wholesome
+    qualifier so the filter reads it as harmless cartoon art.
+
+    The qualifier goes INSIDE the locked style block rather than in front of it.
+    Prepended, it introduced a competing art direction ("stylised
+    non-realistic", "no realism") that overrode the channel's Pixar look, so a
+    retried scene came back visibly off-model next to its neighbours — a second
+    way for the same video to look inconsistent.
     """
-    return ("Wholesome family-friendly 3D Pixar/Disney CARTOON illustration, "
-            "highly stylised non-realistic cute characters, fully clothed, "
-            "innocent and heartwarming, no realism. " + prompt)
+    safe = ("Wholesome, family-friendly, innocent and heartwarming, all "
+            "characters fully clothed. ")
+    if prompt.startswith(SHORTS_STYLE_LOCK):
+        return SHORTS_STYLE_LOCK + safe + prompt[len(SHORTS_STYLE_LOCK):]
+    return safe + prompt
 
 
 def render_slideshow_images(cfg, prompts, run_id):
     """
     Generate one FREE (Pollinations) image per slideshow scene prompt.
 
-    Every prompt is wrapped in the photoreal horror style so the frames look
-    cinematic rather than soft, and ONE seed is shared across the whole video so
-    the characters stay recognisable from scene to scene. `generate_scene_image`
+    Prompts arrive already assembled by build_slide_prompt (style + verbatim
+    character looks + beat), so nothing is wrapped here — wrapping again would
+    stack the style block twice. ONE seed is shared across the whole video,
+    which now pays off because the prompts differ only in their action clause.
+    `generate_scene_image`
     retries each frame internally; a frame that still fails is skipped. A small
     delay between calls keeps the free tier from rate-limiting. Returns the list
     of image paths.
@@ -1531,7 +1852,9 @@ def render_slideshow_images(cfg, prompts, run_id):
     base_seed = random.randint(1, 9_000_000)  # one look for the whole story
     for i, prompt in enumerate(prompts, 1):
         out = os.path.join(WORK_DIR, f"slide_{run_id}_{i}.png")
-        styled = SLIDESHOW_IMG_STYLE + str(prompt).strip() + SLIDESHOW_IMG_QUALITY
+        styled = str(prompt).strip()
+        if SLIDESHOW_IMG_STYLE.strip() not in styled:   # freehand fallback path
+            styled = SLIDESHOW_IMG_STYLE + styled + SLIDESHOW_IMG_QUALITY
         try:
             log.info("Slideshow image %d/%d...", i, total)
             generate_scene_image(cfg, styled, out, width=1920, height=1080,
@@ -1708,7 +2031,12 @@ def _still_to_clip(img_path, out_path, dur, width, height):
     _run_ffmpeg([
         ffmpeg, "-y", "-loop", "1", "-t", f"{dur:.3f}", "-i", img_path, "-an",
         "-vf",
-        f"scale={SW}:{SH},crop={W}:{H}:(in_w-out_w)*{prog}:"
+        # Aspect-preserving fill + centring crop — see assemble_video: a bare
+        # scale stretches an off-aspect still (the free tier's 768x768 square
+        # most of all) and elongates every character in the frame.
+        f"scale={SW}:{SH}:force_original_aspect_ratio=increase,"
+        f"crop={SW}:{SH},"
+        f"crop={W}:{H}:(in_w-out_w)*{prog}:"
         f"(in_h-out_h)*{prog},setsar=1,fps={fps},format=yuv420p",
         "-threads", "1", "-c:v", "libx264", "-preset", "veryfast",
         "-pix_fmt", "yuv420p", "-r", str(fps), out_path,
@@ -1863,7 +2191,16 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path,
         _run_ffmpeg([
             ffmpeg, "-y", "-loop", "1", "-t", f"{per:.3f}", "-i", img, "-an",
             "-vf",
-            f"scale={SW}:{SH},crop={W}:{H}:(in_w-out_w)*{prog}:"
+            # force_original_aspect_ratio=increase + a centring crop, NOT a bare
+            # scale. A bare scale stretches the still to the target box, so the
+            # moment the generator returns anything that is not already 9:16 —
+            # and Pollinations' free tier returns a 768x768 SQUARE — every
+            # character got pulled to three times their height: the elongated,
+            # melted faces in the uploads. Now the frame is filled and the
+            # overflow trimmed, so proportions survive whatever comes back.
+            f"scale={SW}:{SH}:force_original_aspect_ratio=increase,"
+            f"crop={SW}:{SH},"
+            f"crop={W}:{H}:(in_w-out_w)*{prog}:"
             f"(in_h-out_h)*{prog},setsar=1,fps={fps},format=yuv420p",
             # -threads 1 keeps libx264's per-thread frame buffers from
             # multiplying RAM use -> reliable on low-memory (3-4GB) runners.
