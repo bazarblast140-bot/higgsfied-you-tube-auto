@@ -1693,34 +1693,60 @@ def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920,
     import random
     import time as _time
 
-    provider = (cfg.get("image_provider") or "huggingface").strip().lower()
+    # The preferred provider first, then every other one that could still draw.
+    # A single provider used to be the whole story, so when the Higgsfield API
+    # wallet emptied ("403 Not enough credits") every frame failed and BOTH
+    # pipelines died having published nothing. Falling through to a lesser
+    # source keeps the channel running instead of going dark.
+    preferred = (cfg.get("image_provider") or "huggingface").strip().lower()
+    if preferred == "hf":
+        preferred = "huggingface"
+    chain = [preferred] + [p for p in ("huggingface", "higgsfield",
+                                       "pollinations") if p != preferred]
+
+    # A missing key or an empty wallet will not come good on a retry, so those
+    # move straight to the next provider rather than sleeping between attempts.
+    fatal = ("not enough credits", "missing in config.json", "budget too low",
+             "unauthorized", "invalid token", "401", "403")
+
     last = None
-    for attempt in range(1, FREE_IMAGE_TRIES + 1):
-        try:
-            seed = ((base_seed + attempt - 1) if base_seed is not None
-                    else random.randint(1, 9_000_000))
-            if provider in ("huggingface", "hf"):
-                _hugging_face_image(cfg, visual_prompt, out_path,
-                                    width, height, seed=seed)
-            elif provider == "higgsfield":
-                _download_url(_hf_image_url(cfg, visual_prompt, width, height),
-                              out_path)
-            else:
-                _download_url(_free_image_url(
-                    visual_prompt, seed=seed, width=width, height=height,
-                    token=cfg.get("pollinations_token", "").strip()), out_path)
-            if _looks_like_image(out_path):
-                return out_path
-            last = "the download was not a complete image"
-        except Exception as exc:                              # noqa: BLE001
-            last = str(exc)[:120]
+    for provider in chain:
+        for attempt in range(1, FREE_IMAGE_TRIES + 1):
+            try:
+                seed = ((base_seed + attempt - 1) if base_seed is not None
+                        else random.randint(1, 9_000_000))
+                if provider == "huggingface":
+                    _hugging_face_image(cfg, visual_prompt, out_path,
+                                        width, height, seed=seed)
+                elif provider == "higgsfield":
+                    _download_url(
+                        _hf_image_url(cfg, visual_prompt, width, height),
+                        out_path)
+                else:
+                    _download_url(_free_image_url(
+                        visual_prompt, seed=seed, width=width, height=height,
+                        token=cfg.get("pollinations_token", "").strip()),
+                        out_path)
+                if _looks_like_image(out_path):
+                    if provider != preferred:
+                        log.warning("Image drawn by FALLBACK provider '%s' — "
+                                    "'%s' is unavailable.", provider, preferred)
+                    return out_path
+                last = "the download was not a complete image"
+            except Exception as exc:                          # noqa: BLE001
+                last = str(exc)[:160]
 
-        if attempt < FREE_IMAGE_TRIES:
-            log.warning("Free image try %d/%d failed (%s); retrying...",
-                        attempt, FREE_IMAGE_TRIES, last)
-            _time.sleep(3 * attempt)   # back off; the free tier rate-limits
+            if any(s in str(last).lower() for s in fatal):
+                log.warning("Provider '%s' unusable (%s); next provider.",
+                            provider, last)
+                break
+            if attempt < FREE_IMAGE_TRIES:
+                log.warning("Image try %d/%d on '%s' failed (%s); retrying...",
+                            attempt, FREE_IMAGE_TRIES, provider, last)
+                _time.sleep(3 * attempt)   # back off; free tiers rate-limit
 
-    raise RuntimeError(f"Free image failed after {FREE_IMAGE_TRIES} tries: {last}")
+    raise RuntimeError(
+        f"Image failed on every provider {chain}. Last error: {last}")
 
 
 def generate_scene_clip(cfg, image_prompt, video_prompt, out_path):
