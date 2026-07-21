@@ -30,7 +30,12 @@ import imageio_ffmpeg                       # noqa: E402
 import ultimate_shorts_agent as u           # noqa: E402
 
 HF = r"C:\Users\91872\AppData\Local\higgsfield\bin\higgsfield.exe"
-CAST_SHEET = Path(r"C:\Users\91872\Desktop\muli-cast\cast_sheet.jpg")
+# EVERY sheet goes in as a reference, not just the main one. With only the main
+# sheet attached, a story that called for a supporting villager drew whoever on
+# that sheet looked closest — a scene written for Karela Dada came back with the
+# garlic elder instead.
+CAST_SHEETS = [Path(BASE) / "assets" / n for n in
+               ("cast_sheet.jpg", "cast_sheet_2.jpg", "cast_sheet_3.jpg")]
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 
 # kling2_6 is the cheapest motion that still holds the cast: 10 credits per 10s,
@@ -39,6 +44,7 @@ VIDEO_MODEL = "kling2_6"
 MAX_CLIP = 10.0            # the model's ceiling; lines regularly run longer
 STRETCH_LIMIT = 1.45       # beyond this, slow motion stops reading as a choice
 CREDITS_PER_CLIP = 10
+CREDITS_PER_STILL = 2      # one nano_banana_pro draw, measured 2026-07-21
 
 
 def credits():
@@ -59,7 +65,11 @@ def hf_generate(model, out, **params):
     cmd = [HF, "generate", "create", model, "--wait", "--wait-timeout", "12m",
            "--json"]
     for k, v in params.items():
-        cmd += [f"--{k.replace('_', '-')}", str(v)]
+        flag = f"--{k.replace('_', '-')}"
+        # A list means the CLI wants the flag repeated, as it does for the
+        # several cast sheets that make up the character library.
+        for item in (v if isinstance(v, (list, tuple)) else [v]):
+            cmd += [flag, str(item)]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     blob = (r.stdout or "") + (r.stderr or "")
     m = re.search(r'"result_url":\s*"(https[^"]+)"', blob)
@@ -71,12 +81,14 @@ def hf_generate(model, out, **params):
 
 
 def draw_scene(scene, out):
-    """Draw one scene FROM THE CAST SHEET — the only thing that holds the cast."""
+    """Draw one scene FROM THE CAST SHEETS — the only thing that holds the cast."""
     return hf_generate(
         "nano_banana_pro", out,
-        prompt="Use the EXACT characters from the reference cast sheet, same "
-               "designs, same clothes. " + scene["image_prompt"],
-        image_references=CAST_SHEET, aspect_ratio="9:16")
+        prompt="Use the EXACT characters from the reference cast sheets, same "
+               "designs, same clothes. Match each named character to the one "
+               "that actually bears that name on the sheets. "
+               + scene["image_prompt"],
+        image_references=[str(p) for p in CAST_SHEETS], aspect_ratio="9:16")
 
 
 def animate_scene(scene, still, need, out, work):
@@ -124,10 +136,15 @@ def main():
     ap.add_argument("premise", help="the story premise, in Hindi")
     ap.add_argument("--upload", action="store_true")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--stills", action="store_true",
+                    help="skip the paid motion clips and pan over the stills "
+                         "instead — the cast is still drawn from the sheet, so "
+                         "it stays locked, at roughly a sixth of the credits")
     args = ap.parse_args()
 
-    if not CAST_SHEET.exists():
-        raise SystemExit(f"cast sheet missing: {CAST_SHEET}")
+    missing = [str(p) for p in CAST_SHEETS if not p.exists()]
+    if missing:
+        raise SystemExit("cast sheet(s) missing: " + ", ".join(missing))
 
     work = Path(args.out or (Path.home() / "Desktop" / "muli-run"))
     work.mkdir(parents=True, exist_ok=True)
@@ -149,39 +166,66 @@ def main():
     voice = work / "voice.mp3"
     _, total, durs = u.synthesize_scene_voices(cfg, pkg["Scenes"], str(voice))
 
-    need_clips = sum(2 if d > MAX_CLIP * STRETCH_LIMIT else 1 for d in durs)
     have = credits()
-    print(f"     {total:.0f}s across {len(durs)} scenes; ~{need_clips} clips "
-          f"≈ {need_clips * CREDITS_PER_CLIP} credits (have {have})")
-    if have is not None and have < need_clips * CREDITS_PER_CLIP:
-        raise SystemExit("not enough credits — top up, or the video would be "
-                         "abandoned half-paid-for")
+    if args.stills:
+        # Only the scene drawings are billed; the movement is a ffmpeg pan.
+        need = len(pkg["Scenes"]) * CREDITS_PER_STILL
+        print(f"     {total:.0f}s across {len(durs)} scenes; stills only "
+              f"≈ {need} credits (have {have})")
+    else:
+        need_clips = sum(2 if d > MAX_CLIP * STRETCH_LIMIT else 1 for d in durs)
+        need = (need_clips * CREDITS_PER_CLIP
+                + len(pkg["Scenes"]) * CREDITS_PER_STILL)
+        print(f"     {total:.0f}s across {len(durs)} scenes; ~{need_clips} clips "
+              f"≈ {need} credits (have {have})")
+    if have is not None and have < need:
+        raise SystemExit(
+            f"not enough credits ({have} < {need}) — top up, or run with "
+            "--stills, or the video would be abandoned half-paid-for")
 
     print("3/5  drawing scenes from the cast sheet")
     stills = []
     for i, sc in enumerate(pkg["Scenes"], 1):
         p = work / f"s{i}.jpg"
-        if not p.exists():
+        # A drawing is only reusable if it was made for THIS beat. Re-running
+        # writes a fresh story, so reusing whatever happened to sit on disk
+        # pairs new narration with pictures of the old one.
+        stamp = work / f"s{i}.prompt.txt"
+        want = sc.get("image_prompt", "")
+        fresh = (p.exists() and stamp.exists()
+                 and stamp.read_text(encoding="utf-8") == want)
+        if not fresh:
             draw_scene(sc, p)
+            stamp.write_text(want, encoding="utf-8")
         stills.append(p)
-        print(f"     s{i}")
+        print(f"     s{i}{'' if not fresh else ' (reused)'}")
 
-    print("4/5  animating")
-    clips = []
-    for i, (sc, still, need) in enumerate(zip(pkg["Scenes"], stills, durs), 1):
-        c = work / f"clip{i}.mp4"
-        if not c.exists():
-            animate_scene(sc, still, need, c, work)
-        clips.append(str(c))
-        print(f"     clip{i} ({need:.1f}s)")
-
-    print("5/5  assembling")
     final = str(work / "final.mp4")
-    u.assemble_animated_video(clips, str(voice), total, final,
-                              music_dir=u.SHORTS_MUSIC_DIR, music_volume=0.08,
-                              durations=durs)
+    if args.stills:
+        print("4/5  no motion clips (stills mode)")
+        print("5/5  assembling with a slow pan over each still")
+        assets = [str(p) for p in stills]
+        u.assemble_video(assets, str(voice), total, final,
+                         music_dir=u.SHORTS_MUSIC_DIR, music_volume=0.08,
+                         width=1080, height=1920, durations=durs)
+    else:
+        print("4/5  animating")
+        clips = []
+        for i, (sc, still, need) in enumerate(
+                zip(pkg["Scenes"], stills, durs), 1):
+            c = work / f"clip{i}.mp4"
+            if not c.exists():
+                animate_scene(sc, still, need, c, work)
+            clips.append(str(c))
+            print(f"     clip{i} ({need:.1f}s)")
 
-    report = u.audit_video(final, pkg, clips, durs, "muli")
+        print("5/5  assembling")
+        assets = clips
+        u.assemble_animated_video(clips, str(voice), total, final,
+                                  music_dir=u.SHORTS_MUSIC_DIR,
+                                  music_volume=0.08, durations=durs)
+
+    report = u.audit_video(final, pkg, assets, durs, "muli")
     print("\n" + report)
     print(f"\n{final}\ncredits left: {credits()}")
 

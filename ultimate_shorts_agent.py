@@ -614,6 +614,63 @@ def _fetch_google_trend():
 # --------------------------------------------------------------------------- #
 #  STEP 1b — SEO/content generation (Claude, claude-opus-4-8, JSON output)
 # --------------------------------------------------------------------------- #
+def llm_text(cfg, system_prompt, user_prompt, max_tokens):
+    """Ask the configured writing model for one block of text.
+
+    `text_provider` picks the back end:
+      "anthropic" (default) — Claude, via the Anthropic SDK.
+      "openai"              — ANY OpenAI-compatible endpoint, which covers
+                              OpenRouter and the free gateways, set through
+                              `openai_base_url`, `openai_api_key`, `openai_model`.
+
+    Keeping both behind one call means the scripts can move to a free model
+    when Claude credit runs low without touching the six places that write
+    something, and means only one place has to know that Anthropic wants a
+    separate `system` argument while OpenAI-compatible APIs want a system
+    message inside the list.
+    """
+    provider = (cfg.get("text_provider") or "anthropic").strip().lower()
+
+    if provider in ("openai", "openrouter", "openai-compatible"):
+        import requests
+        base = (cfg.get("openai_base_url")
+                or "https://openrouter.ai/api/v1").rstrip("/")
+        key = (cfg.get("openai_api_key") or "").strip()
+        if not key:
+            raise RuntimeError("openai_api_key missing in config.json.")
+        model = cfg.get("openai_model", "deepseek/deepseek-chat")
+        r = requests.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json"},
+            json={"model": model, "max_tokens": max_tokens,
+                  "messages": [{"role": "system", "content": system_prompt},
+                               {"role": "user", "content": user_prompt}]},
+            timeout=600)
+        if r.status_code >= 400:
+            raise RuntimeError(f"{model} failed [{r.status_code}]: {r.text[:300]}")
+        data = r.json()
+        try:
+            return data["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError):
+            raise RuntimeError(f"{model} returned no text: {str(data)[:300]}")
+
+    # The SDK insists on streaming once max_tokens is this large.
+    if max_tokens > 8000:
+        with client.messages.stream(
+            model=model, max_tokens=max_tokens, system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        ) as stream:
+            return "".join(
+                event.delta.text for event in stream
+                if event.type == "content_block_delta"
+                and getattr(event.delta, "type", "") == "text_delta")
+    resp = client.messages.create(
+        model=model, max_tokens=max_tokens, system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}])
+    return "".join(b.text for b in resp.content if b.type == "text")
+
+
 def _extract_json(text):
     """Return the first {...} JSON object found in `text`, ignoring ``` fences."""
     text = text.strip()
@@ -640,12 +697,8 @@ def generate_content_package(cfg, topic):
         Scenes = [{image_prompt, video_prompt, narration_hi}, ...]
     Raises on unrecoverable failure.
     """
-    import anthropic
-
     import random
 
-    client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
-    model = cfg.get("anthropic_model", "claude-opus-4-8")
     num_scenes = int(cfg.get("num_scenes", NUM_SCENES))
     flavor = random.choice(STYLE_FLAVORS)
 
@@ -718,13 +771,7 @@ Constraints: EXACTLY {num_scenes} scenes. Muli Didi central. Family-safe
 emotional drama. Output valid JSON only.
 """
 
-    resp = client.messages.create(
-        model=model,
-        max_tokens=6000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    raw = "".join(b.text for b in resp.content if b.type == "text")
+    raw = llm_text(cfg, system_prompt, user_prompt, 6000)
     data = json.loads(_extract_json(raw))
 
     # ---- Validation / normalization -------------------------------------- #
@@ -799,9 +846,6 @@ def generate_hook(cfg, topic):
     """
     try:
         import random
-        import anthropic
-        client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
-        model = cfg.get("anthropic_model", "claude-opus-4-8")
         style = random.choice(HOOK_STYLES)
         system = (
             "You write viral YouTube Shorts HOOKS in Hindi for a children's "
@@ -817,11 +861,7 @@ def generate_hook(cfg, topic):
             'do NOT start with "रुको" and avoid repeating common opener words. '
             "Reply with ONLY the hook."
         )
-        resp = client.messages.create(
-            model=model, max_tokens=200, system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        hook = "".join(b.text for b in resp.content if b.type == "text").strip()
+        hook = llm_text(cfg, system, user, 200).strip()
         hook = hook.splitlines()[0].strip().strip('"').strip("'") if hook else ""
         log.info("Hook agent: %s", hook)
         return hook
@@ -841,11 +881,8 @@ def generate_news_content_package(cfg, topic):
         ScenePrompts = [visual_prompt_string, ...]
     Raises on unrecoverable failure.
     """
-    import anthropic
     import random
 
-    client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
-    model = cfg.get("anthropic_model", "claude-opus-4-8")
     num_scenes = int(cfg.get("num_scenes", NUM_SCENES)) # Reuse NUM_SCENES for shorts
 
     system_prompt = (
@@ -887,13 +924,7 @@ Constraints: EXACTLY {num_scenes} scene prompts. Everything factual and appropri
 Output valid JSON only.
 """
 
-    resp = client.messages.create(
-        model=model,
-        max_tokens=4000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    raw = "".join(b.text for b in resp.content if b.type == "text")
+    raw = llm_text(cfg, system_prompt, user_prompt, 4000)
     data = json.loads(_extract_json(raw))
 
     # ---- Validation / normalization -------------------------------------- #
@@ -918,10 +949,6 @@ def generate_slideshow_content(cfg, topic, mood):
         Title, Description, Tags, Narration (full Hindi voiceover),
         ScenePrompts = [English image prompt, ...]  (~NUM_SLIDESHOW_SCENES)
     """
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
-    model = cfg.get("anthropic_model", "claude-opus-4-8")
     n = int(cfg.get("num_slideshow_scenes", NUM_SLIDESHOW_SCENES))
     words = int(cfg.get("slideshow_words", 750))  # ~5 min at storytelling pace
 
@@ -986,16 +1013,7 @@ narration order. Output valid JSON only.
 
     # A multi-scene story is still a sizable generation; the SDK requires
     # streaming once max_tokens is this high, so collect the stream.
-    with client.messages.stream(
-        model=model, max_tokens=32000, system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    ) as stream:
-        raw = "".join(
-            event.delta.text
-            for event in stream
-            if event.type == "content_block_delta"
-            and getattr(event.delta, "type", "") == "text_delta"
-        )
+    raw = llm_text(cfg, system_prompt, user_prompt, 32000)
     data = json.loads(_extract_json(raw))
 
     for key in ("TitleHindi", "TitleEnglish", "Description", "Tags",
@@ -2018,9 +2036,6 @@ def generate_stock_queries(cfg, prompts):
     `prompts` (order preserved)."""
     texts = [_stock_prompt_text(p) for p in prompts]
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
-        model = cfg.get("anthropic_model", "claude-opus-4-8")
         numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
         system = (
             "You turn scene descriptions into SHORT English stock-video search "
@@ -2030,11 +2045,7 @@ def generate_stock_queries(cfg, prompts):
             'form {"queries": ["kw kw", ...]} with one string per scene, in the '
             "same order and count."
         )
-        msg = client.messages.create(
-            model=model, max_tokens=1200, system=system,
-            messages=[{"role": "user", "content": numbered}],
-        )
-        raw = next((b.text for b in msg.content if b.type == "text"), "")
+        raw = llm_text(cfg, system, numbered, 1200)
         arr = json.loads(_extract_json(raw)).get("queries", [])
         if isinstance(arr, list) and len(arr) == len(texts):
             return [str(q).strip() or _naive_stock_query(t)
