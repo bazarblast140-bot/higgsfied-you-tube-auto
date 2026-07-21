@@ -24,6 +24,8 @@
 # The cast sheet every Muli scene is drawn from. It lives on the Desktop, so a
 # copy travels with the repo rather than existing only on one laptop.
 !assets/cast_sheet.jpg
+!assets/cast_sheet_2.jpg
+!assets/cast_sheet_3.jpg
 !assets/music/*/
 !assets/music/*/*.mp3
 !assets/music/*/*.m4a
