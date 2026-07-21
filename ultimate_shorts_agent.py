@@ -1429,6 +1429,61 @@ def _hugging_face_image(cfg, prompt, out_path, width, height, seed=None):
     return True
 
 
+# Cloudflare Workers AI. Free allocation is 10,000 neurons PER DAY, reset at
+# 00:00 UTC — a daily budget rather than a one-off pot, which is why this
+# outlives the sources that quietly turned paid. Measured from Cloudflare's own
+# pricing on 2026-07-21: flux-1-schnell costs 4.8 neurons per 512x512 tile plus
+# 9.6 per step, so one 1080x1920 frame at 8 steps is ~134 neurons. A day's work
+# here (4 short scenes + 26 slideshow stills) is ~4,000 — about 40% of the free
+# allowance, leaving room for retries.
+CF_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+CF_STEPS = 8                      # flux-1-schnell's maximum, and its best look
+
+
+def _cloudflare_image(cfg, prompt, out_path, width, height, seed=None):
+    """Render one image through Cloudflare Workers AI, straight to out_path.
+
+    Unlike the free tiers this replaces, it honours the requested width and
+    height, so a 9:16 short and a 16:9 slideshow each come back at full frame
+    size instead of a small square that had to be cropped and blown up — which
+    is what made the published stills look soft and badly framed.
+    """
+    import base64
+    import requests
+
+    account = (cfg.get("cloudflare_account_id") or "").strip()
+    token = (cfg.get("cloudflare_api_token") or "").strip()
+    if not account or not token:
+        raise RuntimeError(
+            "cloudflare_account_id / cloudflare_api_token missing in config.json.")
+
+    model = cfg.get("cloudflare_image_model", CF_IMAGE_MODEL)
+    payload = {"prompt": prompt, "width": int(width), "height": int(height),
+               "steps": int(cfg.get("cloudflare_steps", CF_STEPS))}
+    if seed is not None:
+        payload["seed"] = int(seed)
+
+    r = requests.post(
+        f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}",
+        headers={"Authorization": f"Bearer {token}"}, json=payload, timeout=240)
+    if r.status_code >= 400:
+        raise RuntimeError(
+            f"Cloudflare image failed [{r.status_code}]: {r.text[:300]}")
+
+    # Image models answer either with raw bytes or with base64 inside JSON.
+    if "json" in r.headers.get("content-type", ""):
+        data = r.json()
+        b64 = (data.get("result") or {}).get("image")
+        if not b64:
+            raise RuntimeError(f"Cloudflare returned no image: {str(data)[:300]}")
+        payload_bytes = base64.b64decode(b64)
+    else:
+        payload_bytes = r.content
+    with open(out_path, "wb") as f:
+        f.write(payload_bytes)
+    return True
+
+
 def _hf_image_url(cfg, prompt, width, height):
     """One Higgsfield Soul text2image render -> the finished image URL.
 
@@ -1698,11 +1753,17 @@ def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920,
     # wallet emptied ("403 Not enough credits") every frame failed and BOTH
     # pipelines died having published nothing. Falling through to a lesser
     # source keeps the channel running instead of going dark.
-    preferred = (cfg.get("image_provider") or "huggingface").strip().lower()
+    preferred = (cfg.get("image_provider") or "cloudflare").strip().lower()
     if preferred == "hf":
         preferred = "huggingface"
-    chain = [preferred] + [p for p in ("huggingface", "higgsfield",
-                                       "pollinations") if p != preferred]
+    if preferred in ("cf", "workers-ai"):
+        preferred = "cloudflare"
+    # Cloudflare leads the fallbacks: its free allowance renews daily and it is
+    # the only remaining free source that returns a full-size, correctly shaped
+    # frame. Pollinations stays last as the square-only source of final resort.
+    chain = [preferred] + [p for p in ("cloudflare", "huggingface",
+                                       "higgsfield", "pollinations")
+                           if p != preferred]
 
     # A missing key or an empty wallet will not come good on a retry, so those
     # move straight to the next provider rather than sleeping between attempts.
@@ -1715,7 +1776,10 @@ def generate_scene_image(cfg, visual_prompt, out_path, width=1080, height=1920,
             try:
                 seed = ((base_seed + attempt - 1) if base_seed is not None
                         else random.randint(1, 9_000_000))
-                if provider == "huggingface":
+                if provider == "cloudflare":
+                    _cloudflare_image(cfg, visual_prompt, out_path,
+                                      width, height, seed=seed)
+                elif provider == "huggingface":
                     _hugging_face_image(cfg, visual_prompt, out_path,
                                         width, height, seed=seed)
                 elif provider == "higgsfield":
