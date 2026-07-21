@@ -232,9 +232,57 @@ MULI_CAST_SHEET = {
     ),
 }
 
+# The supporting villagers, drawn on assets/cast_sheet_2.jpg and _3.jpg. They
+# are named here so the writer can actually cast them: without these lines a
+# story asked for Karela Dada silently substituted Lahsun, while the title still
+# announced Karela — the video promised a character it never showed.
+MULI_SUPPORTING = {
+    "gobhi": "GOBHI: a female CAULIFLOWER character — her head IS a white "
+             "cauliflower with green leaves at the base. Green saree.",
+    "bhindi": "BHINDI: a male OKRA character — his head and body ARE a long "
+              "green okra pod. White kurta.",
+    "gajar": "GAJAR: a young female CARROT character — her head IS an orange "
+             "carrot with a green frond top. Yellow frock.",
+    "matar": "MATAR: a small male PEAS character — his head IS a round green "
+             "pea. Blue kurta.",
+    "shimla_mirch": "SHIMLA MIRCH: a male CAPSICUM character — his head IS a "
+                    "green bell pepper with a curved stalk. Brown kurta.",
+    "karela_dada": "KARELA DADA: an elderly male BITTER-GOURD character — his "
+                   "head IS a bumpy green bitter gourd, with a white "
+                   "moustache and white eyebrows. Grey kurta.",
+    "kaddu": "KADDU: a female PUMPKIN character — her head IS a round orange "
+             "pumpkin with a short stalk. Orange saree.",
+    "lauki": "LAUKI: a male BOTTLE-GOURD character — his head and body ARE a "
+             "long pale-green bottle gourd. Cream kurta.",
+    "adrak_dada": "ADRAK DADA: an elderly male GINGER character — his head IS "
+                  "a knobbly brown ginger root, with a long white beard. "
+                  "Saffron kurta.",
+    "nimbu": "NIMBU: a young male LEMON character — his head IS a bright "
+             "yellow lemon. White shirt.",
+    "nariyal": "NARIYAL: a male COCONUT character — his head IS a hairy brown "
+               "coconut with green shoots on top. Green lungi.",
+    "aam": "AAM: a young female MANGO character — her head IS a golden-orange "
+           "mango with one green leaf. Red frock.",
+    "kela": "KELA: a male BANANA character — his head and body ARE a curved "
+            "yellow banana. Blue kurta.",
+    "seb": "SEB: a female APPLE character — her head IS a round red apple with "
+           "a green leaf. Maroon saree.",
+    "anar": "ANAR: a young female POMEGRANATE character — her head IS a deep "
+            "red pomegranate with a small crown. Pink frock.",
+    "makka": "MAKKA: a male CORN character — his head IS a yellow corn cob "
+             "wrapped in green husk leaves. Beige kurta.",
+}
+
 # The whole sheet as one block — what the WRITER reads to plot the story.
-MULI_CAST = " ".join(MULI_CAST_SHEET.values()) + \
-    " Everyone is fully clothed in Indian village clothes."
+MULI_CAST = (
+    " ".join(MULI_CAST_SHEET.values())
+    + " OTHER VILLAGERS available for supporting roles: "
+    + " ".join(MULI_SUPPORTING.values())
+    + " Use ONLY these characters, and call each by the exact name given here "
+      "in BOTH the narration and the title — a title naming someone the story "
+      "never mentions promises a viewer something the video does not show. "
+      "Everyone is fully clothed in Indian village clothes."
+)
 
 # Pasted byte-identical in front of / behind every Shorts scene prompt.
 SHORTS_STYLE_LOCK = (
@@ -654,6 +702,10 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens):
             return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError):
             raise RuntimeError(f"{model} returned no text: {str(data)[:300]}")
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
+    model = cfg.get("anthropic_model", "claude-opus-4-8")
 
     # The SDK insists on streaming once max_tokens is this large.
     if max_tokens > 8000:
