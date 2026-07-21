@@ -281,10 +281,36 @@ def main():
     print(f"\n{final}\ncredits left: {credits()}")
 
     if args.upload:
-        print(u.upload_to_youtube(cfg, final, pkg))
+        url = u.upload_to_youtube(cfg, final, pkg)
+        print(url)
+        # The daily bot reports to Telegram and this tool did not, so a video
+        # made by hand went up with no word of it anywhere.
+        u.send_telegram(
+            cfg,
+            "✅ Muli video uploaded (locked cast)\n\n"
+            f"🎬 {pkg['Title']}\n"
+            f"🎨 {'stills' if args.stills else 'motion'} · "
+            f"{len(durs)} scenes · {total:.0f}s\n"
+            f"💳 credits left: {credits()}\n"
+            f"🔗 {url}\n\n"
+            f"{report}")
     else:
         print("\nnot uploaded — watch it, then re-run with --upload")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # noqa: BLE001
+        # A build can die part-way with credits already spent; say so rather
+        # than leaving the failure sitting unread in a terminal.
+        import traceback
+        traceback.print_exc()
+        try:
+            u.alert_failure(u.load_config(),
+                            f"❌ Muli video build FAILED\nError: {exc}")
+        except Exception:                                     # noqa: BLE001
+            pass
+        raise
