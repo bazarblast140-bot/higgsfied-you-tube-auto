@@ -1,0 +1,12 @@
+# Video requests — edit this file from your phone on github.com
+#
+# Add ONE LINE for each video you want, in Hindi. That is all.
+# Example:
+#     मूली दीदी और कद्दू काकी की कहानी
+#
+# The watcher on the laptop picks it up within 2 minutes, builds the video with
+# the locked cast, uploads it, and rewrites the line with the YouTube link.
+# Telegram tells you when it starts and when it is done.
+#
+# The laptop must be switched on and online.
+# Lines beginning with # are ignored.

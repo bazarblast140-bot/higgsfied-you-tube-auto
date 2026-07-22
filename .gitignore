@@ -6,6 +6,8 @@
 !.gitignore
 !ultimate_shorts_agent.py
 !make_muli_video.py
+!video_requests.txt
+!watch_requests.py
 !requirements.txt
 !topic_bank.json
 !slideshow_topics.json
