@@ -3073,6 +3073,15 @@ def run_slideshow_pipeline():
     try:
         ensure_dirs()
         cfg = load_config()
+
+        # The channel is shorts-only (one niche: Muli Didi). The chudail
+        # slideshow stays off unless the config opts back in — set in the cloud
+        # rather than the workflow file, which this token cannot edit. Exits
+        # quietly so a cron-job.org trigger is a no-op, not a failure.
+        if not cfg.get("enable_slideshow", False):
+            log.info("Slideshow disabled (enable_slideshow not set); skipping.")
+            return
+
         visual_mode = cfg.get("visual_mode", "ai_image")
 
         # 1. sabzi topic + ~3 min story ---------------------------------- #
