@@ -687,21 +687,53 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens):
         if not key:
             raise RuntimeError("openai_api_key missing in config.json.")
         model = cfg.get("openai_model", "deepseek/deepseek-chat")
-        r = requests.post(
-            f"{base}/chat/completions",
-            headers={"Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json"},
-            json={"model": model, "max_tokens": max_tokens,
-                  "messages": [{"role": "system", "content": system_prompt},
-                               {"role": "user", "content": user_prompt}]},
-            timeout=600)
+        # Two clamps, both learned from Kimi K3:
+        #  * cap — Claude allows 32k output and the slideshow asks for it, but
+        #    OpenAI-compatible models cap far lower and reject an over-ask. The
+        #    longest real answer (a ~750-word Hindi story) is ~3k tokens, so
+        #    8192 never truncates.
+        #  * floor — K3 is a REASONING model: it spends hidden "thinking" tokens
+        #    out of the same max_tokens budget before writing any content. The
+        #    hook call asks for only 200, and K3 burns all of it thinking and
+        #    returns an EMPTY string. Giving every call room for the reasoning
+        #    plus its answer is what makes the short calls come back at all.
+        cap = int(cfg.get("openai_max_output_tokens", 8192))
+        floor = int(cfg.get("openai_min_output_tokens", 4096))
+        want = min(max(max_tokens, floor), cap)
+        payload = {"model": model, "max_tokens": want,
+                   "messages": [{"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}]}
+        # K3 intermittently answers 429 "engine overloaded" and can 5xx under
+        # load. On the story call that would sink the whole video, so retry the
+        # transient ones with a growing back-off before giving up.
+        import time as _t
+        r = None
+        for attempt in range(1, 5):
+            r = requests.post(f"{base}/chat/completions",
+                              headers={"Authorization": f"Bearer {key}",
+                                       "Content-Type": "application/json"},
+                              json=payload, timeout=600)
+            if r.status_code < 400 or r.status_code not in (429, 500, 502, 503, 529):
+                break
+            wait = 5 * attempt
+            log.warning("%s transient [%s] (try %d/4); retrying in %ds...",
+                        model, r.status_code, attempt, wait)
+            _t.sleep(wait)
         if r.status_code >= 400:
             raise RuntimeError(f"{model} failed [{r.status_code}]: {r.text[:300]}")
         data = r.json()
         try:
-            return data["choices"][0]["message"]["content"] or ""
+            text = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError):
             raise RuntimeError(f"{model} returned no text: {str(data)[:300]}")
+        if not text.strip():
+            # Empty content with a reasoning model means the whole budget went
+            # to thinking. Surface it clearly rather than failing later on an
+            # empty JSON parse.
+            raise RuntimeError(
+                f"{model} returned empty content (all {want} tokens likely "
+                f"spent on reasoning); raise openai_min_output_tokens.")
+        return text
 
     import anthropic
     client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"])
