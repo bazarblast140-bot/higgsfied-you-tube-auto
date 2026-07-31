@@ -703,8 +703,13 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens, want_json=False):
         #    hook call asks for only 200, and K3 burns all of it thinking and
         #    returns an EMPTY string. Giving every call room for the reasoning
         #    plus its answer is what makes the short calls come back at all.
-        cap = int(cfg.get("openai_max_output_tokens", 8192))
-        floor = int(cfg.get("openai_min_output_tokens", 4096))
+        # K3's hidden reasoning can run several thousand tokens BEFORE it writes
+        # a word, out of the same budget. At 6000 the story came back empty —
+        # reasoning had eaten all of it. The floor gives every call enough room
+        # for the thinking plus its answer; the cap keeps the slideshow's 32k
+        # ask within what the model accepts.
+        cap = int(cfg.get("openai_max_output_tokens", 16384))
+        floor = int(cfg.get("openai_min_output_tokens", 10000))
         want = min(max(max_tokens, floor), cap)
         payload = {"model": model, "max_tokens": want,
                    "messages": [{"role": "system", "content": system_prompt},
