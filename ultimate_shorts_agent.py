@@ -662,8 +662,14 @@ def _fetch_google_trend():
 # --------------------------------------------------------------------------- #
 #  STEP 1b — SEO/content generation (Claude, claude-opus-4-8, JSON output)
 # --------------------------------------------------------------------------- #
-def llm_text(cfg, system_prompt, user_prompt, max_tokens):
+def llm_text(cfg, system_prompt, user_prompt, max_tokens, want_json=False):
     """Ask the configured writing model for one block of text.
+
+    `want_json` puts the OpenAI-compatible back end into JSON mode. Kimi K3 is a
+    reasoning model and, left free, sometimes returns its thinking as prose with
+    the JSON missing or malformed — which surfaced as "No JSON object found" and
+    sank the whole video. JSON mode forces a single valid object, so the story
+    call stops failing intermittently.
 
     `text_provider` picks the back end:
       "anthropic" (default) — Claude, via the Anthropic SDK.
@@ -703,6 +709,10 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens):
         payload = {"model": model, "max_tokens": want,
                    "messages": [{"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_prompt}]}
+        if want_json:
+            # Moonshot requires the word "json" somewhere in the prompt for this
+            # mode; every JSON caller already says "JSON object", so it is safe.
+            payload["response_format"] = {"type": "json_object"}
         # K3 intermittently answers 429 "engine overloaded" and can 5xx under
         # load. On the story call that would sink the whole video, so retry the
         # transient ones with a growing back-off before giving up.
@@ -855,7 +865,7 @@ Constraints: EXACTLY {num_scenes} scenes. Muli Didi central. Family-safe
 emotional drama. Output valid JSON only.
 """
 
-    raw = llm_text(cfg, system_prompt, user_prompt, 6000)
+    raw = llm_text(cfg, system_prompt, user_prompt, 6000, want_json=True)
     data = json.loads(_extract_json(raw))
 
     # ---- Validation / normalization -------------------------------------- #
@@ -1008,7 +1018,7 @@ Constraints: EXACTLY {num_scenes} scene prompts. Everything factual and appropri
 Output valid JSON only.
 """
 
-    raw = llm_text(cfg, system_prompt, user_prompt, 4000)
+    raw = llm_text(cfg, system_prompt, user_prompt, 4000, want_json=True)
     data = json.loads(_extract_json(raw))
 
     # ---- Validation / normalization -------------------------------------- #
@@ -1097,7 +1107,7 @@ narration order. Output valid JSON only.
 
     # A multi-scene story is still a sizable generation; the SDK requires
     # streaming once max_tokens is this high, so collect the stream.
-    raw = llm_text(cfg, system_prompt, user_prompt, 32000)
+    raw = llm_text(cfg, system_prompt, user_prompt, 32000, want_json=True)
     data = json.loads(_extract_json(raw))
 
     for key in ("TitleHindi", "TitleEnglish", "Description", "Tags",
@@ -2129,7 +2139,7 @@ def generate_stock_queries(cfg, prompts):
             'form {"queries": ["kw kw", ...]} with one string per scene, in the '
             "same order and count."
         )
-        raw = llm_text(cfg, system, numbered, 1200)
+        raw = llm_text(cfg, system, numbered, 1200, want_json=True)
         arr = json.loads(_extract_json(raw)).get("queries", [])
         if isinstance(arr, list) and len(arr) == len(texts):
             return [str(q).strip() or _naive_stock_query(t)
