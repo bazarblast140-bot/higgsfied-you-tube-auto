@@ -26,6 +26,28 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
+      - name: Write config.json from secret
+        env:
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+        run: |
+          if [ -z "$CONFIG_JSON" ]; then
+            echo "CONFIG_JSON secret is empty"
+            exit 1
+          fi
+          printf '%s\n' "$CONFIG_JSON" > config.json
+          python -c "import json; json.load(open('config.json')); print('config.json OK')"
+
+      - name: Write token.json if present
+        env:
+          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
+        run: |
+          if [ -n "$TOKEN_JSON" ]; then
+            printf '%s\n' "$TOKEN_JSON" > token.json
+            echo "token.json written"
+          else
+            echo "TOKEN_JSON secret not set — YouTube upload may fail"
+          fi
+
       - name: Run short generator
         env:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
@@ -33,5 +55,4 @@ jobs:
           ELEVENLABS_VOICE_ID: RABOvaPec1ymXz02oDQi
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # MUST pass "run" — bare script enters infinite local scheduler loop
         run: python ultimate_shorts_agent.py run
