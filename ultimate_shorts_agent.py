@@ -1861,6 +1861,10 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
     return out_path, dur
 
 
+# Breath of silence left after each scene's line, so the cut lands on the pause
+# rather than on top of the next word.
+SCENE_VOICE_GAP_S = 0.35
+
 
 def synthesize_scene_voices(cfg, scenes, out_path):
     """Voice each scene's OWN line, then join them into one track.
