@@ -5,9 +5,14 @@ on:
     - cron: "0 11 * * *"
   workflow_dispatch: {}
 
+concurrency:
+  group: daily-muli-short
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -28,4 +33,5 @@ jobs:
           ELEVENLABS_VOICE_ID: RABOvaPec1ymXz02oDQi
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python ultimate_shorts_agent.py
+        # MUST pass "run" — bare script enters infinite local scheduler loop
+        run: python ultimate_shorts_agent.py run
