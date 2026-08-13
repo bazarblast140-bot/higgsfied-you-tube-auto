@@ -1709,46 +1709,130 @@ def _tts_one(narration, out_path, voice, rate, pitch):
         raise RuntimeError("TTS produced an empty audio file.")
 
 
+def _elevenlabs_key(cfg):
+    """Prefer env (GitHub Actions secret), then config.json."""
+    return (
+        (os.environ.get("ELEVENLABS_API_KEY") or "").strip()
+        or (cfg.get("elevenlabs_api_key") or "").strip()
+    )
+
+
+def _elevenlabs_voice_id(cfg):
+    return (
+        (os.environ.get("ELEVENLABS_VOICE_ID") or "").strip()
+        or (cfg.get("elevenlabs_voice_id") or "").strip()
+        or "RABOvaPec1ymXz02oDQi"
+    )
+
+
+def _tts_elevenlabs(narration, out_path, cfg):
+    """One ElevenLabs request -> mp3. Raises on failure."""
+    import requests
+    key = _elevenlabs_key(cfg)
+    vid = _elevenlabs_voice_id(cfg)
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
+    headers = {
+        "xi-api-key": key,
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+    }
+    model = (cfg.get("elevenlabs_model") or "eleven_multilingual_v2").strip()
+    payload = {
+        "text": narration,
+        "model_id": model,
+        "voice_settings": {
+            "stability": float(cfg.get("elevenlabs_stability", 0.5)),
+            "similarity_boost": float(cfg.get("elevenlabs_similarity", 0.75)),
+            "style": float(cfg.get("elevenlabs_style", 0.2)),
+        },
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=120)
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"ElevenLabs HTTP {r.status_code}: {(r.text or '')[:240]}"
+        )
+    if not r.content:
+        raise RuntimeError("ElevenLabs returned empty audio body.")
+    with open(out_path, "wb") as f:
+        f.write(r.content)
+    if os.path.getsize(out_path) < 500:
+        raise RuntimeError("ElevenLabs audio file too small.")
+
+
 def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
                            _tts_rate_override=None, _tts_pitch_override=None):
-    """Generate a Hindi voiceover mp3 from `narration` (free Microsoft TTS).
+    """Generate Hindi voiceover mp3. ElevenLabs first (if key), else edge-tts.
 
-    The narration is voiced in small pieces, each retried a few times, then the
-    pieces are joined — so one empty response from Microsoft costs a retry, not
-    the whole video. Returns (out_path, duration_seconds).
+    Returns (out_path, duration_seconds).
     """
     import time
     import imageio_ffmpeg
     from moviepy import AudioFileClip
 
+    narration = (narration or "").strip()
+    if not narration:
+        narration = "..."
+
+    # ---- Prefer ElevenLabs when key is available ----
+    if _elevenlabs_key(cfg) and not _tts_voice_override:
+        last = None
+        for attempt in range(3):
+            try:
+                log.info(
+                    "TTS: ElevenLabs voice=%s model=%s (try %s/3)...",
+                    _elevenlabs_voice_id(cfg),
+                    cfg.get("elevenlabs_model") or "eleven_multilingual_v2",
+                    attempt + 1,
+                )
+                _tts_elevenlabs(narration, out_path, cfg)
+                a = AudioFileClip(out_path)
+                dur = float(a.duration)
+                a.close()
+                log.info(
+                    "TTS: ElevenLabs ready -> %s (%.1fs)",
+                    os.path.basename(out_path), dur,
+                )
+                return out_path, dur
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                log.warning("ElevenLabs try %s failed: %s", attempt + 1, exc)
+                time.sleep(2 * (attempt + 1))
+        log.warning(
+            "ElevenLabs failed after retries (%s); falling back to edge-tts.",
+            last,
+        )
+
+    # ---- Free Microsoft edge-tts fallback ----
     voice = _tts_voice_override or cfg.get("tts_voice", TTS_VOICE)
     rate = _tts_rate_override if _tts_rate_override is not None else cfg.get("tts_rate", TTS_RATE)
     pitch = _tts_pitch_override if _tts_pitch_override is not None else cfg.get("tts_pitch", TTS_PITCH)
 
     chunks = _split_for_tts(narration)
-    log.info("TTS: generating Hindi voiceover (%s, rate %s, pitch %s, %d piece%s)...",
-             voice, rate, pitch, len(chunks), "" if len(chunks) == 1 else "s")
+    log.info(
+        "TTS: generating Hindi voiceover (%s, rate %s, pitch %s, %d piece%s)...",
+        voice, rate, pitch, len(chunks), "s" if len(chunks) != 1 else "",
+    )
 
     wd = os.path.dirname(out_path) or "."
     stem = os.path.splitext(os.path.basename(out_path))[0]
     parts, tmp = [], []
+
     for i, chunk in enumerate(chunks):
-        part = out_path if len(chunks) == 1 else os.path.join(
-            wd, f"_tts_{stem}_{i}.mp3")
+        part = out_path if len(chunks) == 1 else os.path.join(wd, f"_{stem}_p{i}.mp3")
         last = None
-        for attempt in range(1, TTS_TRIES + 1):
+        for attempt in range(TTS_TRIES):
             try:
                 _tts_one(chunk, part, voice, rate, pitch)
+                last = None
                 break
-            except Exception as exc:                          # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 last = exc
-                log.warning("TTS piece %d/%d try %d failed (%s); retrying...",
-                            i + 1, len(chunks), attempt, str(exc)[:120])
-                time.sleep(2 * attempt)
-        else:
+                time.sleep(1.5 * (attempt + 1))
+        if last is not None:
             raise RuntimeError(
-                f"TTS failed for piece {i + 1}/{len(chunks)} after "
-                f"{TTS_TRIES} tries: {last}")
+                f"edge-tts failed for chunk {i + 1}/{len(chunks)} after "
+                f"{TTS_TRIES} tries: {last}"
+            )
         parts.append(part)
         if len(chunks) > 1:
             tmp.append(part)
@@ -1758,13 +1842,15 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
         listfile = os.path.join(wd, f"_tts_{stem}_list.txt")
         tmp.append(listfile)
         with open(listfile, "w", encoding="utf-8") as f:
-            for p in parts:
-                f.write(f"file '{os.path.abspath(p)}'\n")
-        _run_ffmpeg([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i",
-                     listfile, "-c:a", "libmp3lame", "-b:a", "192k", out_path])
-        for p in tmp:
+            for pth in parts:
+                f.write(f"file '{os.path.abspath(pth)}'\n")
+        _run_ffmpeg([
+            ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i",
+            listfile, "-c:a", "libmp3lame", "-b:a", "192k", out_path,
+        ])
+        for pth in tmp:
             try:
-                os.remove(p)
+                os.remove(pth)
             except OSError:
                 pass
 
@@ -1774,10 +1860,6 @@ def synthesize_hindi_voice(cfg, narration, out_path, _tts_voice_override=None,
     log.info("TTS: voiceover ready -> %s (%.1fs)", os.path.basename(out_path), dur)
     return out_path, dur
 
-
-# Breath of silence left after each scene's line, so the cut lands on the pause
-# rather than on top of the next word.
-SCENE_VOICE_GAP_S = 0.35
 
 
 def synthesize_scene_voices(cfg, scenes, out_path):
