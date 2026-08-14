@@ -464,6 +464,24 @@ def load_config():
     cfg.setdefault("youtube_privacy_status", "public")
     cfg.setdefault("headless", True)
     cfg.setdefault("run_immediately_on_start", False)
+
+    # DeepSeek V4 Pro via env (GitHub secret DEEPSEEK_API_KEY) — overrides
+    # text provider so CONFIG_JSON secret need not be rewritten by hand.
+    ds_key = (os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    if ds_key:
+        cfg["text_provider"] = "openai"
+        cfg["openai_api_key"] = ds_key
+        cfg["openai_base_url"] = (
+            os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com"
+        ).rstrip("/")
+        cfg["openai_model"] = cfg.get("openai_model") or "deepseek-v4-pro"
+        # V4 Pro is strong; keep output budget generous but not huge
+        cfg.setdefault("openai_max_output_tokens", 8192)
+        cfg.setdefault("openai_min_output_tokens", 2048)
+        log.info(
+            "Text provider: DeepSeek (%s) via %s",
+            cfg["openai_model"], cfg["openai_base_url"],
+        )
     return cfg
 
 
