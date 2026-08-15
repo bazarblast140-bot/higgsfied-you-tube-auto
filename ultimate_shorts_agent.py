@@ -728,19 +728,35 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens, want_json=False):
         # reasoning had eaten all of it. The floor gives every call enough room
         # for the thinking plus its answer; the cap keeps the slideshow's 32k
         # ask within what the model accepts.
-        cap = int(cfg.get("openai_max_output_tokens", 16384))
-        floor = int(cfg.get("openai_min_output_tokens", 10000))
+        is_deepseek = "deepseek" in str(model).lower() or "deepseek.com" in base
+        # DeepSeek V4 defaults to thinking mode — burns tokens and often returns
+        # prose without a JSON object. Disable thinking for structured calls.
+        if is_deepseek:
+            cap = int(cfg.get("openai_max_output_tokens", 8192))
+            floor = int(cfg.get("openai_min_output_tokens", 2048))
+        else:
+            cap = int(cfg.get("openai_max_output_tokens", 16384))
+            floor = int(cfg.get("openai_min_output_tokens", 10000))
         want = min(max(max_tokens, floor), cap)
+
+        sys_prompt = system_prompt
+        if want_json:
+            sys_prompt = (
+                system_prompt.rstrip()
+                + "
+
+CRITICAL: Reply with ONE valid JSON object only. "
+                "No markdown fences, no explanation, no thinking out loud."
+            )
         payload = {"model": model, "max_tokens": want,
-                   "messages": [{"role": "system", "content": system_prompt},
+                   "messages": [{"role": "system", "content": sys_prompt},
                                 {"role": "user", "content": user_prompt}]}
         if want_json:
-            # Moonshot requires the word "json" somewhere in the prompt for this
-            # mode; every JSON caller already says "JSON object", so it is safe.
             payload["response_format"] = {"type": "json_object"}
-        # K3 intermittently answers 429 "engine overloaded" and can 5xx under
-        # load. On the story call that would sink the whole video, so retry the
-        # transient ones with a growing back-off before giving up.
+        if is_deepseek:
+            # Official DeepSeek V4: disable thinking for reliable JSON
+            payload["thinking"] = {"type": "disabled"}
+
         import time as _t
         r = None
         for attempt in range(1, 5):
@@ -755,19 +771,21 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens, want_json=False):
                         model, r.status_code, attempt, wait)
             _t.sleep(wait)
         if r.status_code >= 400:
-            raise RuntimeError(f"{model} failed [{r.status_code}]: {r.text[:300]}")
+            raise RuntimeError(f"{model} failed [{r.status_code}]: {r.text[:400]}")
         data = r.json()
         try:
-            text = data["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError):
-            raise RuntimeError(f"{model} returned no text: {str(data)[:300]}")
-        if not text.strip():
-            # Empty content with a reasoning model means the whole budget went
-            # to thinking. Surface it clearly rather than failing later on an
-            # empty JSON parse.
+            msg = data["choices"][0]["message"]
+            text = (msg.get("content") or "").strip()
+            # Some reasoning models put useful text in reasoning_content only
+            if not text:
+                text = (msg.get("reasoning_content") or msg.get("reasoning") or "").strip()
+        except (KeyError, IndexError, TypeError):
+            raise RuntimeError(f"{model} returned no text: {str(data)[:400]}")
+        if not text:
             raise RuntimeError(
-                f"{model} returned empty content (all {want} tokens likely "
-                f"spent on reasoning); raise openai_min_output_tokens.")
+                f"{model} returned empty content (tokens may have gone to "
+                f"hidden reasoning). Response keys: {list(data.get('choices',[{}])[0].get('message',{}).keys())}"
+            )
         return text
 
     import anthropic
@@ -792,16 +810,21 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens, want_json=False):
 
 def _extract_json(text):
     """Return the first {...} JSON object found in `text`, ignoring ``` fences."""
-    text = text.strip()
-    if text.startswith("```"):
-        # strip a leading ```json / ``` fence and the trailing ```
-        text = text.split("```", 2)[1] if text.count("```") >= 2 else text
-        if text.lstrip().lower().startswith("json"):
-            text = text.lstrip()[4:]
+    import re
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("No JSON object found in model response.")
+    # strip markdown fences anywhere
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.I)
+    if fence:
+        text = fence.group(1).strip()
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end < start:
-        raise ValueError("No JSON object found in model response.")
+        preview = text[:240].replace("\n", " ")
+        raise ValueError(
+            f"No JSON object found in model response. Preview: {preview!r}"
+        )
     return text[start:end + 1]
 
 
@@ -891,7 +914,19 @@ emotional drama. Output valid JSON only.
 """
 
     raw = llm_text(cfg, system_prompt, user_prompt, 6000, want_json=True)
-    data = json.loads(_extract_json(raw))
+    try:
+        data = json.loads(_extract_json(raw))
+    except (ValueError, json.JSONDecodeError) as first_err:
+        log.warning("Story JSON parse failed (%s); retrying once...", first_err)
+        retry_user = (
+            user_prompt
+            + "
+
+PREVIOUS REPLY WAS INVALID. Output ONLY a single JSON object "
+            "with keys Title, Description, Tags, Narration, Scenes. No other text."
+        )
+        raw = llm_text(cfg, system_prompt, retry_user, 6000, want_json=True)
+        data = json.loads(_extract_json(raw))
 
     # ---- Validation / normalization -------------------------------------- #
     for key in ("Title", "Description", "Tags", "Narration", "Scenes"):
