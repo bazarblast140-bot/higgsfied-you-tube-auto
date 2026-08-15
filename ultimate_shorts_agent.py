@@ -743,9 +743,7 @@ def llm_text(cfg, system_prompt, user_prompt, max_tokens, want_json=False):
         if want_json:
             sys_prompt = (
                 system_prompt.rstrip()
-                + "
-
-CRITICAL: Reply with ONE valid JSON object only. "
+                + "\n\nCRITICAL: Reply with ONE valid JSON object only. "
                 "No markdown fences, no explanation, no thinking out loud."
             )
         payload = {"model": model, "max_tokens": want,
@@ -920,9 +918,7 @@ emotional drama. Output valid JSON only.
         log.warning("Story JSON parse failed (%s); retrying once...", first_err)
         retry_user = (
             user_prompt
-            + "
-
-PREVIOUS REPLY WAS INVALID. Output ONLY a single JSON object "
+            + "\n\nPREVIOUS REPLY WAS INVALID. Output ONLY a single JSON object "
             "with keys Title, Description, Tags, Narration, Scenes. No other text."
         )
         raw = llm_text(cfg, system_prompt, retry_user, 6000, want_json=True)
