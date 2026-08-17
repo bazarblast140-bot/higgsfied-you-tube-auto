@@ -1,8 +1,10 @@
 name: Daily Muli Short
 
+# 2 videos/day — 9:30 AM IST + 5:00 PM IST
 on:
   schedule:
-    - cron: "0 11 * * *"
+    - cron: "0 4 * * *"      # 09:30 AM IST (04:00 UTC)
+    - cron: "30 11 * * *"    # 05:00 PM IST (11:30 UTC)
   workflow_dispatch: {}
 
 concurrency:
