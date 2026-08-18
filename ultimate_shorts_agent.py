@@ -539,7 +539,7 @@ def load_config():
             os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com"
         ).rstrip("/")
         # ALWAYS deepseek model ids when using DeepSeek endpoint
-        cfg["openai_model"] = "deepseek-v4-pro"
+        cfg["openai_model"] = "deepseek-v4-flash"  # ultra-low cost; switch to -pro if quality drops
         cfg["openai_max_output_tokens"] = int(cfg.get("openai_max_output_tokens") or 8192)
         cfg["openai_min_output_tokens"] = int(cfg.get("openai_min_output_tokens") or 2048)
         # Clear any leftover kimi/anthropic model hints that call sites might read
