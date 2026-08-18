@@ -179,6 +179,7 @@ SEO_BASE_TAGS = [
 #     hair changed shot to shot while the clothes (which WERE stated) stayed
 #     put. So every fixed detail a viewer would notice is pinned here.
 MULI_CAST_SHEET = {
+    # ===== MULI DIDI CORE FAMILY (use often) =====
     "muli_didi": (
         "MULI DIDI: a female RADISH character, NOT a human — her head IS a "
         "smooth white radish, and she alone has a big fresh green leafy top "
@@ -189,26 +190,56 @@ MULI_CAST_SHEET = {
         "and whole body, barefoot."
     ),
     "garib_aalu": (
-        "GARIB AALU (her husband): a male POTATO character, NOT a human — his "
-        "head and body ARE a big round light-brown potato, entirely covered in "
-        "rough brown potato skin with small potato eye-dimples, and the top of "
-        "his potato head is completely smooth and bare. Small sad black eyes, "
-        "thick black eyebrows, a drooping black moustache. He wears a "
-        "long-sleeved patched beige kurta buttoned to the neck that covers his "
-        "whole torso and arms, and a matching beige dhoti, barefoot."
+        "GARIB AALU (Muli Didi's husband): a male POTATO character, NOT a human "
+        "— his head and body ARE a big round light-brown potato, entirely "
+        "covered in rough brown potato skin with small potato eye-dimples, and "
+        "the top of his potato head is completely smooth and bare. Small sad "
+        "black eyes, thick black eyebrows, a drooping black moustache. He wears "
+        "a long-sleeved patched beige kurta buttoned to the neck that covers "
+        "his whole torso and arms, and a matching beige dhoti, barefoot."
     ),
+    "beta_chunnu": (
+        "CHUNNU (Muli's son): a small boy RADISH character, NOT a human — his "
+        "head IS a little white radish with a tiny green leafy top, white "
+        "radish skin, big round dark brown eyes. Wears a simple blue kurta and "
+        "beige shorts, barefoot. About 6 years old energy."
+    ),
+    "beti_munni": (
+        "MUNNI (Muli's daughter): a small girl RADISH character, NOT a human — "
+        "her head IS a little white radish with a small green leafy top, white "
+        "radish skin, big round eyes, tiny red bindi. Wears a simple yellow "
+        "frock, barefoot. About 5 years old energy."
+    ),
+    "muli_maa": (
+        "MULI MAA (Muli Didi's mother): an elderly female RADISH character, NOT "
+        "a human — her head IS a white radish with a softer smaller green leafy "
+        "top, gentle wrinkled eyes, greyish hair-line under leaves. Wears a "
+        "faded maroon saree over full-sleeved blouse, barefoot."
+    ),
+    "muli_papa": (
+        "MULI PAPA (Muli Didi's father): an elderly male RADISH character, NOT "
+        "a human — his head IS a slightly larger white radish with a thin green "
+        "leafy top, kind wrinkled eyes, thin white moustache. Wears a cream "
+        "kurta and dhoti, barefoot."
+    ),
+    "bhai_moolchand": (
+        "MOOLCHAND (Muli Didi's younger brother): a young male RADISH character, "
+        "NOT a human — his head IS a white radish with a green leafy top, "
+        "energetic eyes. Wears a green kurta, barefoot."
+    ),
+    "saas_aloo_maa": (
+        "ALOO MAA (Muli's mother-in-law, Aalu's mother): an elderly female "
+        "POTATO character, NOT a human — her head IS a round brown potato, "
+        "kind or strict eyes depending on the scene, smooth bare potato scalp. "
+        "Wears a brownish-orange saree over full sleeves, barefoot."
+    ),
+    # ===== RECURRING VILLAGE (not core family) =====
     "ameer_baingan": (
         "AMEER BAINGAN (the rich villain): a male BRINJAL character, NOT a "
         "human — his head and body ARE a shiny deep-purple eggplant with a "
         "small green stalk cap on top. Narrow eyes, a thin black moustache. "
         "FULLY CLOTHED in a black suit, with black sunglasses and a thick gold "
         "chain."
-    ),
-    "muli_children": (
-        "MULI'S CHILDREN: two small RADISH kids, NOT humans — each head IS a "
-        "little white radish with a small green leafy top, white radish skin, "
-        "big round dark brown eyes and a bare smooth white scalp under the "
-        "leaves. Fully clothed in simple beige village clothes, barefoot."
     ),
     "tamatar": (
         "TAMATAR: a male TOMATO character, NOT a human — his head and body ARE "
@@ -904,7 +935,7 @@ Rules:
 - Story arc across the {num_scenes} scenes: setup -> a TURN (courage, friendship,
   animal helper, festival, honesty, rescue, OR sacrifice — MIX IT UP, do not
   always write love/betrayal) -> a twist -> heartfelt ending with a clear moral.
-- MULI DIDI is in almost every scene as the emotional centre. Other vegetables
+- MULI DIDI is in almost every scene as the emotional centre. Often include family: husband Garib Aalu, kids Chunnu & Munni, Muli Maa / Muli Papa, brother Moolchand, or saas Aloo Maa — so the home feels full, not only Muli alone. Other vegetables
   and animals (cat, dog, parrot, cow, deer, owl, monkey, bird) may appear as
   helpers or side characters — use at most 1 animal per scene when the topic
   calls for it. Animals attract viewers; keep them cute and family-safe.
