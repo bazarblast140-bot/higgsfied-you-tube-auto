@@ -2460,26 +2460,59 @@ def fetch_stock_clip(cfg, query, out_path, orientation="portrait"):
     return None
 
 
-def _still_to_clip(img_path, out_path, dur, width, height):
-    """Turn a still image into a short Ken-Burns mp4 clip so a Pollinations
-    still fallback can be stitched by the same clip assembler as real footage.
-    Reuses the exact crop-pan approach from assemble_video (low-RAM, threads=1)."""
+# Camera moves for the still frames. A daily channel cannot afford real AI
+# video, and rigged 3D animation is out of scope, so the frames stay still —
+# but a still that only slides sideways reads as a dead slideshow. Every scene
+# instead gets a smooth ZOOM plus a diagonal drift (a proper Ken Burns move via
+# zoompan), and the direction alternates and rotates per scene so consecutive
+# frames feel distinct and the short has energy. Free: it is one ffmpeg filter,
+# no API, no per-clip cost.
+_PAN_CORNERS = [(0.12, 0.12), (0.88, 0.12), (0.88, 0.88), (0.12, 0.88),
+                (0.50, 0.50)]
+
+
+def _motion_vf(i, per, W, H, fps):
+    """Return the -vf string that turns still image #i into a moving `per`-second
+    9:16 frame: cover-fill to a 1.5x canvas, then zoompan a 12% zoom + a
+    corner-to-corner drift. `crop` cannot animate its size (only x/y), which is
+    why zoompan does the zoom. The 1.5x intermediate keeps zoompan's sub-pixel
+    jitter invisible while staying light enough for a 3-4GB runner.
+    """
+    sw, sh = int(W * 1.5), int(H * 1.5)
+    nf = max(1, round(per * fps))
+    zoom = 0.12
+    if i % 2 == 0:                                   # alternate in / out
+        z = f"min(1+{zoom}*on/{nf},{1 + zoom:.3f})"
+    else:
+        z = f"max({1 + zoom:.3f}-{zoom}*on/{nf},1)"
+    sx, sy = _PAN_CORNERS[i % len(_PAN_CORNERS)]
+    ex, ey = _PAN_CORNERS[(i + 2) % len(_PAN_CORNERS)]
+    fx = f"({sx}+({ex - sx})*on/{nf})"
+    fy = f"({sy}+({ey - sy})*on/{nf})"
+    x = f"(iw-iw/zoom)*{fx}"
+    y = f"(ih-ih/zoom)*{fy}"
+    return (
+        f"scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={sw}:{sh},"
+        f"zoompan=z='{z}':x='{x}':y='{y}':d={nf}:s={W}x{H}:fps={fps},"
+        f"setsar=1,format=yuv420p"
+    )
+
+
+def _still_to_clip(img_path, out_path, dur, width, height, scene_index=0):
+    """Turn a still image into a short moving mp4 clip so a still fallback can be
+    stitched by the same clip assembler as real footage. Uses the shared
+    zoom+pan camera move (low-RAM, threads=1)."""
     import imageio_ffmpeg
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    W, H = width, height
-    SW, SH = int(W * 1.2), int(H * 1.2)          # 1.2x headroom for the pan
     fps = 30
-    prog = f"min(1\\,t/{dur:.3f})"
+    nf = max(1, round(dur * fps))
+    # Cap the output with -frames:v, NOT -t. zoompan with d=NF on a -loop 1
+    # input ignores -t and runs away emitting NF frames per looped input frame
+    # (thousands of frames, effectively hanging); -frames:v stops it dead at NF.
     _run_ffmpeg([
-        ffmpeg, "-y", "-loop", "1", "-t", f"{dur:.3f}", "-i", img_path, "-an",
-        "-vf",
-        # Aspect-preserving fill + centring crop — see assemble_video: a bare
-        # scale stretches an off-aspect still (the free tier's 768x768 square
-        # most of all) and elongates every character in the frame.
-        f"scale={SW}:{SH}:force_original_aspect_ratio=increase,"
-        f"crop={SW}:{SH},"
-        f"crop={W}:{H}:(in_w-out_w)*{prog}:"
-        f"(in_h-out_h)*{prog},setsar=1,fps={fps},format=yuv420p",
+        ffmpeg, "-y", "-loop", "1", "-i", img_path, "-an",
+        "-vf", _motion_vf(scene_index, dur, width, height, fps),
+        "-frames:v", str(nf),
         "-threads", "1", "-c:v", "libx264", "-preset", "veryfast",
         "-pix_fmt", "yuv420p", "-r", str(fps), out_path,
     ])
@@ -2520,7 +2553,7 @@ def render_stock_clips(cfg, prompts, run_id, width=1080, height=1920):
                 log.info("  no stock hit; Pollinations still fallback %d.", i)
                 generate_scene_image(cfg, prompt, still,
                                      width=width, height=height)
-                _still_to_clip(still, out, 5.0, width, height)
+                _still_to_clip(still, out, 5.0, width, height, scene_index=i)
                 paths.append(out)
             except Exception as exc:                          # noqa: BLE001
                 log.warning("Fallback still %d failed (%s); skipping scene.",
@@ -2608,8 +2641,7 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path,
     mdir = music_dir or MUSIC_DIR
     mvol = MUSIC_VOLUME if music_volume is None else music_volume
     W, H = width, height
-    SW, SH = int(W * 1.2), int(H * 1.2)   # 1.2x upscale -> headroom for the pan
-    fps = 30
+    fps = 30   # the per-scene zoom+pan headroom now lives in _motion_vf
     n = max(1, len(image_paths))
     # Each scene holds for its OWN narration line when the caller measured them;
     # equal slices are only a fallback for callers that pass one long voiceover.
@@ -2628,22 +2660,17 @@ def assemble_video(image_paths, voice_path, voice_dur, out_path,
         per = pers[i]
         seg = os.path.join(wd, f"_kb_{i}.mp4")
         tmp.append(seg)
-        prog = (f"min(1\\,t/{per:.3f})" if i % 2 == 0
-                else f"max(0\\,1-t/{per:.3f})")
+        nf = max(1, round(per * fps))
         _run_ffmpeg([
-            ffmpeg, "-y", "-loop", "1", "-t", f"{per:.3f}", "-i", img, "-an",
-            "-vf",
-            # force_original_aspect_ratio=increase + a centring crop, NOT a bare
-            # scale. A bare scale stretches the still to the target box, so the
-            # moment the generator returns anything that is not already 9:16 —
-            # and Pollinations' free tier returns a 768x768 SQUARE — every
-            # character got pulled to three times their height: the elongated,
-            # melted faces in the uploads. Now the frame is filled and the
-            # overflow trimmed, so proportions survive whatever comes back.
-            f"scale={SW}:{SH}:force_original_aspect_ratio=increase,"
-            f"crop={SW}:{SH},"
-            f"crop={W}:{H}:(in_w-out_w)*{prog}:"
-            f"(in_h-out_h)*{prog},setsar=1,fps={fps},format=yuv420p",
+            ffmpeg, "-y", "-loop", "1", "-i", img, "-an",
+            # Shared zoom+pan camera move: a smooth zoom plus a diagonal drift,
+            # direction rotating per scene, so the short reads as alive instead
+            # of a static slide. The move's cover-fill also protects an
+            # off-aspect still (e.g. a 768x768 square) from being stretched.
+            "-vf", _motion_vf(i, per, W, H, fps),
+            # -frames:v (not -t): zoompan on a looped input ignores -t and runs
+            # away emitting thousands of frames; -frames:v stops it at exactly nf.
+            "-frames:v", str(nf),
             # -threads 1 keeps libx264's per-thread frame buffers from
             # multiplying RAM use -> reliable on low-memory (3-4GB) runners.
             "-threads", "1",
