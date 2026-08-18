@@ -75,3 +75,27 @@ finding belongs to the long-form channel, not here.
 
 `slideshow.yml` (long-form chudail horror, `workflow_dispatch` only) produced
 ~20 videos at 0-9 views each. It never fires on a schedule; leave it off.
+
+## The learning loop
+
+The pipeline used to pick a premise at random and never look back — it had no
+way of knowing that `muli_action` earns views and `muli_drama` does not. It now
+keeps `topic_performance.json`: every upload records its topic, category and
+video id, and the next run fetches those videos' view counts through the public
+YouTube Data API (`cfg["youtube_api_key"]` — public statistics, so no OAuth
+scope beyond the upload token already in use).
+
+Categories are then scored and the topic pick is weighted by that score. Four
+rules keep the loop honest:
+
+- **Median, not mean.** One 6,000-view outlier among a dozen 20-view uploads
+  must not sell the whole category.
+- **72-hour grace.** A video only votes once it has had time to earn views, so
+  this morning's upload does not drag its category down.
+- **Three samples minimum.** Below that a category is scored at the median of
+  the ones that qualify, so it keeps getting tried instead of being written off.
+- **30% stays uniform.** Without a floor, one lucky video would lock the channel
+  into a single category forever.
+
+If the API key is missing or the call fails, the pick falls back to uniform
+random and the run continues.
