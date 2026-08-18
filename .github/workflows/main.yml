@@ -1,11 +1,17 @@
 name: Daily Muli Short
 
-# 2 videos/day — 9:30 AM IST + 5:00 PM IST
+# 1 video/day — 9:30 AM IST. Was 2/day; at that rate the 50-topic bank is
+# exhausted and reset every 25 days, and every reset starts the repeats again.
 on:
   schedule:
     - cron: "0 4 * * *"      # 09:30 AM IST (04:00 UTC)
-    - cron: "30 11 * * *"    # 05:00 PM IST (11:30 UTC)
   workflow_dispatch: {}
+
+# The run marks topics used in topic_bank.json and pushes the file back, so the
+# next run knows what has already aired. Without write access that memory is
+# lost on every fresh checkout and topics get picked again at random.
+permissions:
+  contents: write
 
 concurrency:
   group: daily-muli-short
@@ -60,3 +66,22 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python ultimate_shorts_agent.py run
+
+      - name: Persist the used-topic list
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add topic_bank.json slideshow_topics.json || true
+          if git diff --staged --quiet; then
+            echo "no topic-bank change to persist"
+            exit 0
+          fi
+          git commit -m "chore: mark topic used [skip ci]"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep $((2 ** i))
+          done
+          echo "could not persist topic bank" >&2
+          exit 1

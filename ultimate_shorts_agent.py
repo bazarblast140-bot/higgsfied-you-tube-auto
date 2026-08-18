@@ -153,11 +153,16 @@ SEO_HASHTAGS = [
     "#Shorts", "#sabjikahani", "#aalukahani", "#mulididi", "#kahani",
     "#emotionalstory", "#sabzicartoon", "#hindikahani", "#vegetablecartoon",
     "#gaonkikahani", "#moralstory", "#dilchhukahani",
+    "#BarfPahalwan", "#MuliDidi", "#AaluKaka", "#PyajHulk",
 ]
 SEO_BASE_TAGS = [
     "sabji kahani", "aalu muli ki kahani", "muli didi", "vegetable cartoon hindi",
     "emotional story hindi", "sabzi cartoon", "gaon ki kahani", "hindi kahani",
     "dil chhu lene wali kahani", "moral story hindi",
+    # This channel's own best Shorts are action/rescue, so the tags follow the
+    # recurring villains and set-pieces that actually pulled views.
+    "barf pahalwan", "muli didi ki team", "sabzi action", "rakshas kahani",
+    "aalu kaka", "pyaj hulk", "hindi cartoon shorts", "veggie squad",
 ]
 
 # The channel's SIGNATURE RECURRING CAST — starred (Muli Didi) in EVERY short so
@@ -934,25 +939,43 @@ Rules:
 - MULI DIDI must be central to the story. Use only the fixed cast above.
 - Style: cinematic 3D Pixar-style cartoon, vertical 9:16, Indian village, warm
   emotional lighting. Visual mood for THIS video: {flavor}.
-- Story arc across the {num_scenes} scenes: setup -> a TURN (courage, friendship,
-  animal helper, festival, honesty, rescue, OR sacrifice — MIX IT UP, do not
-  always write love/betrayal) -> a twist -> heartfelt ending with a clear moral.
+- Story arc across the {num_scenes} scenes: an immediate THREAT (a villain, a
+  monster, a disaster, someone in danger) -> the stakes get worse -> Muli Didi's
+  team acts with courage -> a physical turn where the danger is beaten -> short
+  moral. This channel's three best Shorts are all action/rescue (Barf Pahalwan
+  duel, the rakshas temple, saving the arrogant seth) at 2-5% like rates; its
+  quiet emotional-sacrifice shorts sit at 1-30 views. Danger first, feelings
+  inside the danger — never a slow domestic scene.
 - MULI DIDI is in almost every scene as the emotional centre. Often include family: husband Garib Aalu, kids Chunnu & Munni, Muli Maa / Muli Papa, brother Moolchand, or saas Aloo Maa — so the home feels full, not only Muli alone. Other vegetables
   and animals (cat, dog, parrot, cow, deer, owl, monkey, bird) may appear as
   helpers or side characters — use at most 1 animal per scene when the topic
   calls for it. Animals attract viewers; keep them cute and family-safe.
-- Do NOT repeat the same "poor potato / rich brinjal love triangle" plot every
-  time. Rotate genres: rescue, friendship, festival, honesty, bravery, animal.
-- SCENE 1 is the HOOK: the most dramatic/emotional moment, to stop the scroll.
+- Rotate the THREAT so no two shorts feel alike: Barf Pahalwan, a rakshas, a
+  flood, a fire, an earthquake, thieves, a collapsing bridge, a sea storm.
+  Emotional beats belong inside the rescue, not instead of it.
+- SCENE 1 IS THE WHOLE BALLGAME. Shorts distribution is gated on how many
+  viewers stay past the first two seconds, so scene 1 opens INSIDE the trouble —
+  never on an establishing shot, never on someone walking or talking calmly.
+  Its "narration_hi" must be a line of SPOKEN DIALOGUE from a character in the
+  middle of the crisis (a shout, a warning, a threat, a plea), not a narrator
+  setting the scene. No greeting, no "एक गाँव में...", no character introduction.
+  The viewer should not yet know who these people are — that question is what
+  keeps them watching.
+- The LAST scene must visually echo scene 1 (same location or framing) and the
+  last line must land the twist, so the Short loops cleanly. Replays count as
+  views and a clean loop is the cheapest reach this format offers.
 - Narration: fluent, natural, emotional Hindi storytelling. Total ~100-120 words
   (about 40-45 seconds) so the story is clear, not rushed.
 
 Return ONLY a JSON object with EXACTLY these keys:
 
-- "Title": a HIGH-SEO, dramatic Hindi/Hinglish YouTube title (under ~90 chars,
-  1-2 emojis), in the viral sabzi-cartoon style — front-load a curiosity hook
-  and searchable keywords (e.g. "मूली", "गरीब आलू", "sabji kahani", "emotional
-  story"). Example shape: "😢 गरीब आलू की पत्नी मूली ने दिया धोखा | Sabji Kahani".
+- "Title": SHORT Hindi curiosity line, HARD LIMIT 45 characters, exactly one
+  emoji at the front. The Shorts feed truncates long titles, and keyword
+  stuffing does not drive Shorts reach — the biggest channel in this format
+  titles every upload with three hashtags and no tags at all. Write the
+  question the viewer wants answered, not a summary of the plot, and never
+  spoil the twist. Good: "😱 बर्फ पहलवान ने गाँव का पानी रोक दिया".
+  Bad: "😢 गरीब आलू की पत्नी मूली ने अमीर बैंगन के लिए किया बड़ा त्याग | Sabji Kahani".
 - "Description": 2-3 lines of emotional Hindi. First line keyword-rich, then a
   subscribe request. Do NOT add hashtags yourself (added automatically).
 - "Tags": array of 10-15 relevant hindi + english SEO keywords (no '#').
@@ -1070,8 +1093,11 @@ def generate_hook(cfg, topic):
             'Write ONE super-catchy HINDI (Devanagari) opening HOOK line for a '
             f'kids cartoon story about: "{topic}".\n'
             f"HOOK STYLE for THIS video: {style}.\n"
-            "Rules: max ~12 words, spoken in about 3 seconds, instant curiosity "
-            "or surprise so viewers don't scroll away. Simple Hindi a child "
+            "Rules: max ~10 words, spoken in under 2 seconds. It must be a "
+            "line of DIALOGUE shouted or gasped by a character already in "
+            "danger — a warning, a threat, a cry for help. NOT narration, NOT "
+            "a question to the audience, NOT scene-setting. Drop the viewer "
+            "mid-crisis with no idea who is speaking. Simple Hindi a child "
             "enjoys. IMPORTANT: be ORIGINAL and VARY the opening every time — "
             'do NOT start with "रुको" and avoid repeating common opener words. '
             "Reply with ONLY the hook."

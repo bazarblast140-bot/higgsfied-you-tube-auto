@@ -3,6 +3,9 @@ name: Slideshow Long Video
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   make-slideshow:
     runs-on: ubuntu-latest
@@ -27,3 +30,22 @@ jobs:
           printf '%s' "$TOKEN_JSON" > token.json
       - name: Generate and upload the slideshow video
         run: python ultimate_shorts_agent.py slideshow
+
+      - name: Persist the used-topic list
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add topic_bank.json slideshow_topics.json || true
+          if git diff --staged --quiet; then
+            echo "no topic-bank change to persist"
+            exit 0
+          fi
+          git commit -m "chore: mark topic used [skip ci]"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep $((2 ** i))
+          done
+          echo "could not persist topic bank" >&2
+          exit 1
