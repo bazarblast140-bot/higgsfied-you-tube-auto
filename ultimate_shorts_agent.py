@@ -82,6 +82,19 @@ LOG_DIR       = os.path.join(BASE_DIR, "logs")
 TOPIC_BANK    = os.path.join(BASE_DIR, "topic_bank.json")   # kids-story topics
 NEWS_TOPIC_BANK = os.path.join(BASE_DIR, "news_topic_bank.json") # news topics
 SLIDESHOW_BANK = os.path.join(BASE_DIR, "slideshow_topics.json")  # sabzi drama/horror
+PERF_LEDGER   = os.path.join(BASE_DIR, "topic_performance.json")  # topic -> views
+
+# How the pipeline learns which premises earn reach.
+# Views need time to land, so a video is only allowed to vote once it has had
+# PERF_MIN_AGE_H to accumulate them — otherwise this morning's upload, which has
+# almost no views yet, would drag its whole category down. A category needs
+# PERF_MIN_SAMPLES scored videos before its own number is trusted; below that it
+# is treated as average so it still gets tried. PERF_EXPLORE is the share of the
+# pick that stays uniform no matter what the numbers say — without it one lucky
+# video would lock the channel into a single category forever.
+PERF_MIN_AGE_H   = 72
+PERF_MIN_SAMPLES = 3
+PERF_EXPLORE     = 0.30
 
 YOUTUBE_UPLOAD_SCOPE = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -561,6 +574,133 @@ def load_config():
 # --------------------------------------------------------------------------- #
 #  STEP 1a — Trending engine (Google Trends RSS)
 # --------------------------------------------------------------------------- #
+def _load_perf():
+    """Read the performance ledger. Never raises — a missing or corrupt ledger
+    just means the pipeline has nothing to learn from yet."""
+    try:
+        with open(PERF_LEDGER, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        recs = data.get("records")
+        return recs if isinstance(recs, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _save_perf(records):
+    """Write the ledger back. Trimmed to the most recent 500 uploads so the
+    file stays small enough to commit on every run."""
+    try:
+        with open(PERF_LEDGER, "w", encoding="utf-8") as f:
+            json.dump({"records": records[-500:]}, f,
+                      ensure_ascii=False, indent=2)
+    except OSError as exc:                                    # noqa: BLE001
+        log.warning("Could not write %s (%s).", PERF_LEDGER, exc)
+
+
+def record_upload(topic, category, video_id):
+    """Append one upload to the ledger so a later run can score it."""
+    import datetime as dt
+
+    recs = _load_perf()
+    recs.append({
+        "topic": topic,
+        "category": category,
+        "videoId": video_id,
+        "publishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "views": None,
+    })
+    _save_perf(recs)
+    log.info("Ledger: recorded %s under '%s'.", video_id, category)
+
+
+def refresh_performance(cfg):
+    """Fill in view counts for everything in the ledger.
+
+    Uses the public YouTube Data API with cfg["youtube_api_key"] — view counts
+    are public, so this needs no extra OAuth scope beyond the upload token the
+    pipeline already holds. Failure is never fatal: without fresh numbers the
+    topic pick simply falls back to uniform random.
+    """
+    import requests
+
+    key = (cfg.get("youtube_api_key") or "").strip()
+    recs = _load_perf()
+    if not key or not recs:
+        if not key:
+            log.info("No youtube_api_key set; skipping performance refresh.")
+        return recs
+
+    ids = [r["videoId"] for r in recs if r.get("videoId")]
+    stats = {}
+    try:
+        for i in range(0, len(ids), 50):          # the API takes 50 ids a call
+            batch = ids[i:i + 50]
+            resp = requests.get(
+                "https://www.googleapis.com/youtube/v3/videos",
+                params={"part": "statistics", "id": ",".join(batch),
+                        "key": key},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            for item in resp.json().get("items", []):
+                v = item.get("statistics", {}).get("viewCount")
+                if v is not None:
+                    stats[item["id"]] = int(v)
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        log.warning("Performance refresh failed (%s); using uniform pick.", exc)
+        return recs
+
+    for r in recs:
+        if r.get("videoId") in stats:
+            r["views"] = stats[r["videoId"]]
+    _save_perf(recs)
+    log.info("Ledger: refreshed views for %d/%d videos.", len(stats), len(ids))
+    return recs
+
+
+def _category_weights(records, categories):
+    """Score each category by the MEDIAN views of its mature uploads.
+
+    Median, not mean, because one 6,000-view outlier among a dozen 20-view
+    uploads should not convince the pipeline that the whole category works.
+    """
+    import datetime as dt
+    import statistics
+
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=PERF_MIN_AGE_H)
+    by_cat = {}
+    for r in records:
+        if r.get("views") is None or r.get("category") not in categories:
+            continue
+        try:
+            published = dt.datetime.fromisoformat(r["publishedAt"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=dt.timezone.utc)
+        if published > cutoff:                    # too fresh to have earned views
+            continue
+        by_cat.setdefault(r["category"], []).append(r["views"])
+
+    scored = {c: statistics.median(v) for c, v in by_cat.items()
+              if len(v) >= PERF_MIN_SAMPLES}
+    if not scored:
+        return {c: 1.0 for c in categories}       # nothing learned yet -> uniform
+
+    # Categories without enough evidence sit at the median of the ones that do,
+    # so they keep getting sampled rather than being written off unseen.
+    neutral = statistics.median(scored.values())
+    raw = {c: float(scored.get(c, neutral)) for c in categories}
+
+    total = sum(raw.values()) or 1.0
+    n = len(categories)
+    weights = {c: (1 - PERF_EXPLORE) * (v / total) + PERF_EXPLORE / n
+               for c, v in raw.items()}
+    log.info("Category weights: %s",
+             ", ".join(f"{c}={w:.2f}" for c, w in sorted(weights.items())))
+    return weights
+
+
 def pick_topic(cfg):
     """
     Pick an UNUSED kids-story topic from topic_bank.json, mark it used, and
@@ -582,7 +722,9 @@ def pick_topic(cfg):
             pool = all_topics
         if not pool:
             raise ValueError("topic_bank.json has no topics")
-        cat, topic = random.choice(pool)
+        weights = _category_weights(refresh_performance(cfg), set(cats))
+        cat, topic = random.choices(
+            pool, weights=[weights.get(c, 1.0) for c, _ in pool], k=1)[0]
         used.add(topic)
         bank["used_topics"] = sorted(used)
         with open(TOPIC_BANK, "w", encoding="utf-8") as f:
@@ -3242,6 +3384,16 @@ def run_pipeline():
         # 4. Quality gate + upload --------------------------------------- #
         audit = audit_video(final_video, pkg, scene_paths, scene_durs, run_id)
         url = upload_to_youtube(cfg, final_video, pkg)
+
+        # Log which premise produced this video so a later run can score it by
+        # views and steer the topic pick. Never let bookkeeping fail an upload
+        # that already succeeded.
+        try:
+            record_upload(trend["topic"],
+                          trend.get("category", "unknown"),
+                          url.rsplit("v=", 1)[-1])
+        except Exception as exc:                              # noqa: BLE001
+            log.warning("Could not record upload in the ledger (%s).", exc)
 
         # 5. Notify ------------------------------------------------------ #
         send_telegram(

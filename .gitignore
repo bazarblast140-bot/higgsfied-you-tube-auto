@@ -11,6 +11,7 @@
 !requirements.txt
 !topic_bank.json
 !slideshow_topics.json
+!topic_performance.json
 !DATA_NOTES.md
 
 # The runner builds the video in the cloud, so music has to travel with the
