@@ -6,7 +6,7 @@ ultimate_shorts_agent.py
 A single-file, production-grade pipeline that automatically:
 
   1. Picks an unused kids-story topic from topic_bank.json -> Topic bank
-  2. Writes a 6-scene HINDI cartoon story (Pixar/Disney)   -> Claude (opus)
+  2. Writes a 10-scene HINDI cartoon story (Pixar/Disney)  -> LLM
   3. Generates a cute Hindi voiceover                      -> edge-tts (free)
   4. Renders + ANIMATES each scene (image -> video)        -> Higgsfield Soul+DoP
   5. Stitches the animated clips + voiceover + music       -> ffmpeg
@@ -110,7 +110,7 @@ HIGGSFIELD_API = {
 }
 
 # Kids cartoon-story settings (NITIN CARTOON ZONE style).
-NUM_SCENES   = 6                       # scenes per story (~40-50s total)
+NUM_SCENES   = 10                      # more images so supporting cast shows (~55-70s)
 TTS_VOICE    = "hi-IN-SwaraNeural"     # cute girl (or hi-IN-MadhurNeural for boy)
 TTS_RATE     = "+18%"                   # faster + energetic (grabs attention)
 TTS_PITCH    = "+22Hz"                  # higher = cuter, child-like
@@ -145,7 +145,7 @@ HF_IMAGE_MODEL       = "black-forest-labs/FLUX.1-schnell"
 # subjects poorly, and the error grows fast with the head count — at four to six
 # characters the vegetables swap heads and clothes outright. Two holds. Raise
 # this only on a model with stronger multi-subject binding (FLUX.1-dev).
-MAX_CHARS_PER_SCENE  = 2
+MAX_CHARS_PER_SCENE  = 3              # muli + 1-2 others (animal/veg) per frame
 
 # Reach / SEO — niche hashtags appended to every description, and base keywords
 # merged into tags so YouTube surfaces the video in search + suggested.
@@ -928,12 +928,7 @@ Return ONLY a JSON object with EXACTLY these keys:
 - "Scenes": an array of EXACTLY {num_scenes} objects, in order, each with:
     - "characters": an array of the cast IDS visible in this beat, e.g.
       ["muli_didi", "garib_aalu"]. Use the exact ids listed above, nothing else.
-      AT MOST {MAX_CHARS_PER_SCENE} ids per scene, and prefer just one. This is
-      a hard visual limit, not a style note: with more bodies in one frame the
-      image model swaps their heads and clothes around and the cast stops
-      looking like itself. Write the beat so it needs only one or two of them
-      on screen — a crowd scene must be staged as a close-up on whoever the
-      narration is about.
+      AT MOST {MAX_CHARS_PER_SCENE} ids per scene. Aim for 2 characters in most scenes (Muli Didi + one friend/animal/villager) so the supporting cast is visible across the short. Only use 1 character for pure close-up emotion. Never exceed {MAX_CHARS_PER_SCENE} — more bodies confuse the image model.
     - "action": ONE English sentence describing ONLY what is happening in this
       frame — the pose, the emotion on their faces, the village location, the
       props, the camera framing. Do NOT describe what the characters look like,
