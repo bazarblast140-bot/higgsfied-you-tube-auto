@@ -542,6 +542,8 @@ def load_config():
         cfg["openai_model"] = "deepseek-v4-flash"  # ultra-low cost; switch to -pro if quality drops
         cfg["openai_max_output_tokens"] = int(cfg.get("openai_max_output_tokens") or 8192)
         cfg["openai_min_output_tokens"] = int(cfg.get("openai_min_output_tokens") or 2048)
+        # Secret CONFIG_JSON often pins old num_scenes=4 — force more frames
+        cfg["num_scenes"] = max(int(cfg.get("num_scenes") or 0), NUM_SCENES)
         # Clear any leftover kimi/anthropic model hints that call sites might read
         cfg["anthropic_model"] = cfg.get("anthropic_model")  # leave alone if unused
         log.info(
@@ -903,7 +905,7 @@ def generate_content_package(cfg, topic):
     """
     import random
 
-    num_scenes = int(cfg.get("num_scenes", NUM_SCENES))
+    num_scenes = max(int(cfg.get("num_scenes") or 0), NUM_SCENES)
     flavor = random.choice(STYLE_FLAVORS)
 
     system_prompt = (
@@ -1689,8 +1691,12 @@ def _cloudflare_image(cfg, prompt, out_path, width, height, seed=None):
             "cloudflare_account_id / cloudflare_api_token missing in config.json.")
 
     model = cfg.get("cloudflare_image_model", CF_IMAGE_MODEL)
+    # CF flux-1-schnell hard-limits prompt length to 2048 chars
+    prompt_cf = (prompt or "").strip()
+    if len(prompt_cf) > 2000:
+        prompt_cf = prompt_cf[:1990].rsplit(" ", 1)[0] + "…"
     payload = {
-        "prompt": prompt,
+        "prompt": prompt_cf,
         "steps": int(cfg.get("cloudflare_steps", CF_STEPS)),
     }
 
