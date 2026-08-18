@@ -868,9 +868,15 @@ Rules:
 - MULI DIDI must be central to the story. Use only the fixed cast above.
 - Style: cinematic 3D Pixar-style cartoon, vertical 9:16, Indian village, warm
   emotional lighting. Visual mood for THIS video: {flavor}.
-- Story arc across the {num_scenes} scenes: setup -> an emotional turn (sacrifice,
-  betrayal, hardship or a test) -> a moving twist -> a heartfelt ending with a
-  clear moral (seekh). Emotional and gripping, but family-safe.
+- Story arc across the {num_scenes} scenes: setup -> a TURN (courage, friendship,
+  animal helper, festival, honesty, rescue, OR sacrifice — MIX IT UP, do not
+  always write love/betrayal) -> a twist -> heartfelt ending with a clear moral.
+- MULI DIDI is in almost every scene as the emotional centre. Other vegetables
+  and animals (cat, dog, parrot, cow, deer, owl, monkey, bird) may appear as
+  helpers or side characters — use at most 1 animal per scene when the topic
+  calls for it. Animals attract viewers; keep them cute and family-safe.
+- Do NOT repeat the same "poor potato / rich brinjal love triangle" plot every
+  time. Rotate genres: rescue, friendship, festival, honesty, bravery, animal.
 - SCENE 1 is the HOOK: the most dramatic/emotional moment, to stop the scroll.
 - Narration: fluent, natural, emotional Hindi storytelling. Total ~100-120 words
   (about 40-45 seconds) so the story is clear, not rushed.
@@ -902,13 +908,11 @@ Return ONLY a JSON object with EXACTLY these keys:
       render quality or aspect ratio: all of that is added automatically and
       must stay identical in every scene. Keep exactly the cast listed in
       "characters" in frame — no extra background people.
-    - "video_prompt": a detailed ENGLISH motion prompt describing what the
-      characters DO in this scene (gestures, emotional expressions, movement).
+    - "video_prompt": detailed ENGLISH motion for image-to-video: slow camera push-in or gentle parallax, cloth/leaves moving in breeze, blinking eyes, subtle body sway — make it feel like a living animated film frame, not a still.
     - "narration_hi": this scene's portion of the Hindi narration. Joined in
       order, all narration_hi together = the full Narration.
 
-Constraints: EXACTLY {num_scenes} scenes. Muli Didi central. Family-safe
-emotional drama. Output valid JSON only.
+Constraints: EXACTLY {num_scenes} scenes. Muli Didi ALWAYS central. Family-safe. Vary the plot type. Output valid JSON only.
 """
 
     raw = llm_text(cfg, system_prompt, user_prompt, 6000, want_json=True)
