@@ -237,6 +237,35 @@ MULI_CAST_SHEET = {
 # story asked for Karela Dada silently substituted Lahsun, while the title still
 # announced Karela — the video promised a character it never showed.
 MULI_SUPPORTING = {
+    # Attractive animals (viewer magnets) — side roles; MULI DIDI stays hero
+    "billi_minni": (
+        "MINNI THE CAT: a cute small orange tabby cat, big sparkling eyes, "
+        "soft fur, NOT a vegetable — cartoon cat companion of Muli Didi."
+    ),
+    "kutta_sheru": (
+        "SHERU THE DOG: a loyal medium-size brown Indian village dog, floppy "
+        "ears, warm eyes, wagging tail — cartoon dog friend of Muli Didi."
+    ),
+    "tota_ramu": (
+        "RAMU THE PARROT: a bright green Indian parrot with a red beak, "
+        "often on Muli Didi's shoulder or a branch."
+    ),
+    "gaay_lakshmi": (
+        "LAKSHMI THE COW: a gentle white Indian cow with kind eyes and small "
+        "horns, soft cartoon style."
+    ),
+    "hirni": (
+        "HIRNI THE DEER: a graceful young spotted deer fawn with large soft eyes."
+    ),
+    "ullu": (
+        "ULU THE OWL: a small brown owl with round eyes on a night tree branch."
+    ),
+    "bandar_muniya": (
+        "MUNIYA THE MONKEY: a playful small grey langur monkey, curious eyes."
+    ),
+    "chidiya": (
+        "CHIDIYA: a tiny brown sparrow near Muli Didi's hand or windowsill."
+    ),
     "gobhi": "GOBHI: a female CAULIFLOWER character — her head IS a white "
              "cauliflower with green leaves at the base. Green saree.",
     "bhindi": "BHINDI: a male OKRA character — his head and body ARE a long "
@@ -286,9 +315,13 @@ MULI_CAST = (
 
 # Pasted byte-identical in front of / behind every Shorts scene prompt.
 SHORTS_STYLE_LOCK = (
-    "3D Pixar-style cartoon animation, film-quality Pixar/DreamWorks 3D render, "
-    "cute-but-expressive vegetable characters with big emotional eyes, Indian "
-    "village setting, volumetric cinematic lighting, ultra-detailed. "
+    "Cinematic 3D animated short film still, Pixar/DreamWorks quality, "
+    "looks like a paused movie frame not a flat illustration, "
+    "shallow depth of field, soft volumetric god-rays, warm golden-hour or "
+    "moonlit village lighting, subtle motion-ready cloth and leaves, "
+    "cute-but-expressive vegetable characters with big emotional eyes, "
+    "Indian village set (mud walls, neem trees, clay pots), "
+    "ultra-detailed, light film grain, rich color grade. "
 )
 SHORTS_TAIL_LOCK = (
     " Vertical 9:16 composition. One single clean frame: exactly one of each "
