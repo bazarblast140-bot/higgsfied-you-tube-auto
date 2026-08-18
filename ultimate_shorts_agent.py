@@ -1672,15 +1672,15 @@ CF_STEPS = 8                      # flux-1-schnell's maximum, and its best look
 
 
 def _cloudflare_image(cfg, prompt, out_path, width, height, seed=None):
-    """Render one image through Cloudflare Workers AI, straight to out_path.
+    """Render via Cloudflare Workers AI flux-1-schnell, then cover-crop to size.
 
-    Unlike the free tiers this replaces, it honours the requested width and
-    height, so a 9:16 short and a 16:9 slideshow each come back at full frame
-    size instead of a small square that had to be cropped and blown up — which
-    is what made the published stills look soft and badly framed.
+    API schema (2026) accepts only prompt + steps — width/height/seed are
+    rejected. We resize/crop to the caller's 9:16 or 16:9 with Pillow.
     """
     import base64
     import requests
+    from io import BytesIO
+    from PIL import Image
 
     account = (cfg.get("cloudflare_account_id") or "").strip()
     token = (cfg.get("cloudflare_api_token") or "").strip()
@@ -1689,10 +1689,10 @@ def _cloudflare_image(cfg, prompt, out_path, width, height, seed=None):
             "cloudflare_account_id / cloudflare_api_token missing in config.json.")
 
     model = cfg.get("cloudflare_image_model", CF_IMAGE_MODEL)
-    payload = {"prompt": prompt, "width": int(width), "height": int(height),
-               "steps": int(cfg.get("cloudflare_steps", CF_STEPS))}
-    if seed is not None:
-        payload["seed"] = int(seed)
+    payload = {
+        "prompt": prompt,
+        "steps": int(cfg.get("cloudflare_steps", CF_STEPS)),
+    }
 
     r = requests.post(
         f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}",
@@ -1701,7 +1701,6 @@ def _cloudflare_image(cfg, prompt, out_path, width, height, seed=None):
         raise RuntimeError(
             f"Cloudflare image failed [{r.status_code}]: {r.text[:300]}")
 
-    # Image models answer either with raw bytes or with base64 inside JSON.
     if "json" in r.headers.get("content-type", ""):
         data = r.json()
         b64 = (data.get("result") or {}).get("image")
@@ -1710,9 +1709,27 @@ def _cloudflare_image(cfg, prompt, out_path, width, height, seed=None):
         payload_bytes = base64.b64decode(b64)
     else:
         payload_bytes = r.content
-    with open(out_path, "wb") as f:
-        f.write(payload_bytes)
+
+    tw, th = int(width), int(height)
+    img = Image.open(BytesIO(payload_bytes)).convert("RGB")
+    # cover-crop to target aspect, then resize
+    sw, sh = img.size
+    target_aspect = tw / max(th, 1)
+    src_aspect = sw / max(sh, 1)
+    if src_aspect > target_aspect:
+        # too wide — crop sides
+        new_w = int(sh * target_aspect)
+        left = max(0, (sw - new_w) // 2)
+        img = img.crop((left, 0, left + new_w, sh))
+    else:
+        # too tall — crop top/bottom
+        new_h = int(sw / target_aspect)
+        top = max(0, (sh - new_h) // 2)
+        img = img.crop((0, top, sw, top + new_h))
+    img = img.resize((tw, th), Image.Resampling.LANCZOS)
+    img.save(out_path, quality=95)
     return True
+
 
 
 def _hf_image_url(cfg, prompt, width, height):
