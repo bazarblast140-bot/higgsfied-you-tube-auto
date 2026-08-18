@@ -153,16 +153,16 @@ SEO_HASHTAGS = [
     "#Shorts", "#sabjikahani", "#aalukahani", "#mulididi", "#kahani",
     "#emotionalstory", "#sabzicartoon", "#hindikahani", "#vegetablecartoon",
     "#gaonkikahani", "#moralstory", "#dilchhukahani",
-    "#dhokha", "#MoliKaDhoka", "#KarelaSeth", "#Sabzipur",
+    "#BarfPahalwan", "#MuliDidi", "#AaluKaka", "#PyajHulk",
 ]
 SEO_BASE_TAGS = [
     "sabji kahani", "aalu muli ki kahani", "muli didi", "vegetable cartoon hindi",
     "emotional story hindi", "sabzi cartoon", "gaon ki kahani", "hindi kahani",
     "dil chhu lene wali kahani", "moral story hindi",
-    # vidIQ outlier data (Aug 2026): every 250k+ video in this niche is a
-    # "dhoka" (betrayal) story, so these carry the search + suggested traffic.
-    "dhokha", "mooli ka dhoka", "aloo aur mooli ki kahani", "karela seth",
-    "sabzipur", "vegetable story hindi", "3d animated story hindi",
+    # This channel's own best Shorts are action/rescue, so the tags follow the
+    # recurring villains and set-pieces that actually pulled views.
+    "barf pahalwan", "muli didi ki team", "sabzi action", "rakshas kahani",
+    "aalu kaka", "pyaj hulk", "hindi cartoon shorts", "veggie squad",
 ]
 
 # The channel's SIGNATURE RECURRING CAST — starred (Muli Didi) in EVERY short so
@@ -937,20 +937,20 @@ Rules:
 - MULI DIDI must be central to the story. Use only the fixed cast above.
 - Style: cinematic 3D Pixar-style cartoon, vertical 9:16, Indian village, warm
   emotional lighting. Visual mood for THIS video: {flavor}.
-- Story arc across the {num_scenes} scenes: setup -> a BETRAYAL (the dhoka: a
-  trusted character secretly turns on the hero) -> the loyal friend who warns and
-  is disbelieved -> a twist where the betrayer is exposed -> heartfelt ending with
-  a clear moral. Betrayal IS the format here, not a rut: vidIQ outlier data shows
-  every 250k+ video in this niche is a "dhoka" story. Vary WHO betrays WHOM and
-  HOW, not the shape of the arc.
+- Story arc across the {num_scenes} scenes: an immediate THREAT (a villain, a
+  monster, a disaster, someone in danger) -> the stakes get worse -> Muli Didi's
+  team acts with courage -> a physical turn where the danger is beaten -> short
+  moral. This channel's three best Shorts are all action/rescue (Barf Pahalwan
+  duel, the rakshas temple, saving the arrogant seth) at 2-5% like rates; its
+  quiet emotional-sacrifice shorts sit at 1-30 views. Danger first, feelings
+  inside the danger — never a slow domestic scene.
 - MULI DIDI is in almost every scene as the emotional centre. Often include family: husband Garib Aalu, kids Chunnu & Munni, Muli Maa / Muli Papa, brother Moolchand, or saas Aloo Maa — so the home feels full, not only Muli alone. Other vegetables
   and animals (cat, dog, parrot, cow, deer, owl, monkey, bird) may appear as
   helpers or side characters — use at most 1 animal per scene when the topic
   calls for it. Animals attract viewers; keep them cute and family-safe.
-- Keep the dhoka premise but rotate the BETRAYER and the STAKES so no two
-  videos feel alike: money, land, a crop, a marriage, a false case, a stolen
-  secret. Rescue/festival/animal beats are welcome as texture inside the arc —
-  just never as the whole plot, which is what the low-view uploads did.
+- Rotate the THREAT so no two shorts feel alike: Barf Pahalwan, a rakshas, a
+  flood, a fire, an earthquake, thieves, a collapsing bridge, a sea storm.
+  Emotional beats belong inside the rescue, not instead of it.
 - SCENE 1 is the HOOK: the most dramatic/emotional moment, to stop the scroll.
 - Narration: fluent, natural, emotional Hindi storytelling. Total ~100-120 words
   (about 40-45 seconds) so the story is clear, not rushed.
