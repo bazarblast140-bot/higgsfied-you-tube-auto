@@ -1288,9 +1288,10 @@ narration order. Output valid JSON only.
 def _cast_id_list():
     """The cast as `id — NAME` lines, so the writer picks ids it cannot misspell
     into a character that then gets silently dropped from the frame."""
+    all_cast = {**MULI_CAST_SHEET, **MULI_SUPPORTING}
     return "\n".join(
         f"  {cid} — {look.split(':', 1)[0]}"
-        for cid, look in MULI_CAST_SHEET.items()
+        for cid, look in all_cast.items()
     )
 
 
@@ -1317,7 +1318,8 @@ def build_scene_prompt(characters, action, flavor):
     stops the writer drifting; it cannot stop the model mixing up a crowd, so
     the crowd has to go.
     """
-    ids = [c for c in (characters or []) if c in MULI_CAST_SHEET]
+    ALL = {**MULI_CAST_SHEET, **MULI_SUPPORTING}
+    ids = [c for c in (characters or []) if c in ALL]
     if not ids:
         ids = ["muli_didi"]
     if len(ids) > MAX_CHARS_PER_SCENE:
@@ -1329,7 +1331,7 @@ def build_scene_prompt(characters, action, flavor):
     for c in ids:                              # de-dupe, keep the writer's order
         if c not in seen:
             seen.add(c)
-            looks.append(MULI_CAST_SHEET[c])
+            looks.append(ALL[c])
     return (SHORTS_STYLE_LOCK + f"Colour mood: {flavor}. " + " ".join(looks)
             + " SCENE: " + str(action).strip().rstrip(".") + "." + SHORTS_TAIL_LOCK)
 
