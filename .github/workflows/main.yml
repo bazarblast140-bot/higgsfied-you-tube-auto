@@ -2,9 +2,23 @@ name: Daily Muli Short
 
 # 1 video/day — 9:30 AM IST. Was 2/day; at that rate the 50-topic bank is
 # exhausted and reset every 25 days, and every reset starts the repeats again.
+# ── PAUSED 28 Aug 2026 ───────────────────────────────────────────────
+# Wajah: GitHub Actions ke minutes khatam ho rahe the (~1,860 / 2,000 is
+# mahine, aur ye poore ACCOUNT me share hote hain — sab repos ke beech).
+# Is workflow ka har run ~26 MINUTE leta hai (44 run = 1,137 min), yaani
+# akele hi aadha quota. Uski wajah se QUIZ PATHSHALA ke scheduled runs
+# queue me atak rahe the aur 3-4 ghante late chal rahe the.
+#
+# Minutes 1 September ko reset hote hain. Tab tak ye band hai.
+# Chalu karne ke liye: neeche wali do line se '# ' hata do.
+# Beech me chalana ho to Actions tab -> Run workflow (wo abhi bhi kaam karta hai).
+#
+# Asli fix: 26 min/run bahut zyada hai. Wo kam ho jaaye to ye phir se
+# roz chal sakta hai bina kisi aur cheez ko rokay.
+# ─────────────────────────────────────────────────────────────────────
 on:
-  schedule:
-    - cron: "0 4 * * *"      # 09:30 AM IST (04:00 UTC)
+  # schedule:
+  #   - cron: "0 4 * * *"      # 09:30 AM IST (04:00 UTC)
   workflow_dispatch: {}
 
 # The run marks topics used in topic_bank.json and pushes the file back, so the
