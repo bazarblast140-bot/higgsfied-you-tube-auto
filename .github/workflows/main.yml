@@ -2,23 +2,29 @@ name: Daily Muli Short
 
 # 1 video/day — 9:30 AM IST. Was 2/day; at that rate the 50-topic bank is
 # exhausted and reset every 25 days, and every reset starts the repeats again.
-# ── PAUSED 28 Aug 2026 ───────────────────────────────────────────────
-# Wajah: GitHub Actions ke minutes khatam ho rahe the (~1,860 / 2,000 is
-# mahine, aur ye poore ACCOUNT me share hote hain — sab repos ke beech).
-# Is workflow ka har run ~26 MINUTE leta hai (44 run = 1,137 min), yaani
-# akele hi aadha quota. Uski wajah se QUIZ PATHSHALA ke scheduled runs
-# queue me atak rahe the aur 3-4 ghante late chal rahe the.
+# ── AUTO-PAUSE 28 Aug – 31 Aug 2026 ──────────────────────────────────
+# Cron chaalu hai, par neeche 'gate' job 1 September se pehle build ko
+# chalne nahi deta. Kisi ko yaad rakhne ki zaroorat nahi — 1 tareekh ko
+# ye apne aap roz chalne lagega.
 #
-# Minutes 1 September ko reset hote hain. Tab tak ye band hai.
-# Chalu karne ke liye: neeche wali do line se '# ' hata do.
-# Beech me chalana ho to Actions tab -> Run workflow (wo abhi bhi kaam karta hai).
+# Wajah: Actions ke minutes khatam ho rahe the (~1,860 / 2,000 is mahine;
+# ye poore ACCOUNT me sab repos ke beech share hote hain). Is workflow ka
+# har run ~26 MINUTE leta hai (44 run = 1,137 min) — akele hi aadha quota.
+# Usse QUIZ PATHSHALA ke runs 3-4 ghante late chal rahe the. Minutes har
+# mahine ki 1 tareekh ko reset hote hain.
 #
-# Asli fix: 26 min/run bahut zyada hai. Wo kam ho jaaye to ye phir se
-# roz chal sakta hai bina kisi aur cheez ko rokay.
+# Kharcha: gate job ~10 second me exit hota hai (1 min bill), build job
+# shuru hi nahi hota. 4 din = ~4 minute.
+#
+# 1 Sept ke baad gate job delete kar sakte ho — wo tab tak no-op hoga.
+# Manual run (workflow_dispatch) par gate lagta hi nahi, wo hamesha chalta hai.
+#
+# ASLI FIX abhi baaki: 26 min/run bahut zyada hai (quiz pipeline 2 min me
+# ho jaati hai). Wo kam karo, warna agle mahine phir yahi dikkat.
 # ─────────────────────────────────────────────────────────────────────
 on:
-  # schedule:
-  #   - cron: "0 4 * * *"      # 09:30 AM IST (04:00 UTC)
+  schedule:
+    - cron: "0 4 * * *"      # 09:30 AM IST (04:00 UTC)
   workflow_dispatch: {}
 
 # The run marks topics used in topic_bank.json and pushes the file back, so the
@@ -32,7 +38,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gate:
+    # Sirf date check. RESUME_ON aane tak scheduled build skip hota hai.
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        run: |
+          RESUME_ON=2026-09-01
+          TODAY=$(date -u +%F)
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "manual run — gate lagu nahi"
+            echo "run=yes" >> $GITHUB_OUTPUT
+          elif [[ "$TODAY" < "$RESUME_ON" ]]; then
+            echo "::notice::$TODAY, $RESUME_ON se pehle — Actions minutes bachane ke liye skip"
+            echo "run=no" >> $GITHUB_OUTPUT
+          else
+            echo "$TODAY — resume date aa gaya, normal chalega"
+            echo "run=yes" >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.run == 'yes'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
