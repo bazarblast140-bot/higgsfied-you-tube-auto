@@ -1,0 +1,30 @@
+name: Bump DeepSeek V4.1
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace model id
+        run: |
+          python3 -c "
+          from pathlib import Path
+          p = Path('ultimate_shorts_agent.py')
+          t = p.read_text(encoding='utf-8')
+          old = 'cfg[\"openai_model\"] = \"deepseek-v4-flash\"  # ultra-low cost; switch to -pro if quality drops'
+          new = 'cfg[\"openai_model\"] = \"deepseek-flash\"  # V4.1-Flash latest; switch to deepseek-v4-pro if quality drops'
+          if old not in t:
+              raise SystemExit('pattern not found')
+          p.write_text(t.replace(old, new, 1), encoding='utf-8')
+          print('updated')
+          "
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ultimate_shorts_agent.py
+          git commit -m "feat(llm): DeepSeek V4.1 latest — deepseek-flash (Muli/quiz/shorts)" || echo no change
+          git push
