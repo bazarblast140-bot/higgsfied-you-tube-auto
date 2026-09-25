@@ -2,29 +2,10 @@ name: Daily Muli Short
 
 # 1 video/day — 9:30 AM IST. Was 2/day; at that rate the 50-topic bank is
 # exhausted and reset every 25 days, and every reset starts the repeats again.
-# ── AUTO-PAUSE 28 Aug – 31 Aug 2026 ──────────────────────────────────
-# Cron chaalu hai, par neeche 'gate' job 1 September se pehle build ko
-# chalne nahi deta. Kisi ko yaad rakhne ki zaroorat nahi — 1 tareekh ko
-# ye apne aap roz chalne lagega.
-#
-# Wajah: Actions ke minutes khatam ho rahe the (~1,860 / 2,000 is mahine;
-# ye poore ACCOUNT me sab repos ke beech share hote hain). Is workflow ka
-# har run ~26 MINUTE leta hai (44 run = 1,137 min) — akele hi aadha quota.
-# Usse QUIZ PATHSHALA ke runs 3-4 ghante late chal rahe the. Minutes har
-# mahine ki 1 tareekh ko reset hote hain.
-#
-# Kharcha: gate job ~10 second me exit hota hai (1 min bill), build job
-# shuru hi nahi hota. 4 din = ~4 minute.
-#
-# 1 Sept ke baad gate job delete kar sakte ho — wo tab tak no-op hoga.
-# Manual run (workflow_dispatch) par gate lagta hi nahi, wo hamesha chalta hai.
-#
-# ASLI FIX abhi baaki: 26 min/run bahut zyada hai (quiz pipeline 2 min me
-# ho jaati hai). Wo kam karo, warna agle mahine phir yahi dikkat.
+# ── PAUSED: daily Shorts schedule disabled due to low views ──────────
+# Manual workflow_dispatch remains available if you choose to resume later.
 # ─────────────────────────────────────────────────────────────────────
 on:
-  schedule:
-    - cron: "0 4 * * *"      # 09:30 AM IST (04:00 UTC)
   workflow_dispatch: {}
 
 # The run marks topics used in topic_bank.json and pushes the file back, so the
