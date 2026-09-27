@@ -1,16 +1,21 @@
 name: Daily Muli Short
 
-# 1 video/day — 9:30 AM IST. Was 2/day; at that rate the 50-topic bank is
-# exhausted and reset every 25 days, and every reset starts the repeats again.
-# ── PAUSED: daily Shorts schedule disabled due to low views ──────────
-# Manual workflow_dispatch remains available if you choose to resume later.
+# ── HARD PAUSED ──────────────────────────────────────────────────────
+# User request: stop completely (low views, credits burning).
+# Schedule is removed. Even workflow_dispatch is blocked unless the
+# caller explicitly passes force_run=true. External daily triggers at
+# ~02:30 UTC will now no-op instead of publishing.
+# To resume later: either set force_run when dispatching, or restore
+# the schedule + remove the force gate.
 # ─────────────────────────────────────────────────────────────────────
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "ONLY set true to actually build+upload. Default blocks the run."
+        type: boolean
+        default: false
 
-# The run marks topics used in topic_bank.json and pushes the file back, so the
-# next run knows what has already aired. Without write access that memory is
-# lost on every fresh checkout and topics get picked again at random.
 permissions:
   contents: write
 
@@ -20,7 +25,6 @@ concurrency:
 
 jobs:
   gate:
-    # Sirf date check. RESUME_ON aane tak scheduled build skip hota hai.
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -28,17 +32,13 @@ jobs:
     steps:
       - id: check
         run: |
-          RESUME_ON=2026-09-01
-          TODAY=$(date -u +%F)
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "manual run — gate lagu nahi"
+          FORCE="${{ github.event.inputs.force_run }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "force_run=true — allowing build"
             echo "run=yes" >> $GITHUB_OUTPUT
-          elif [[ "$TODAY" < "$RESUME_ON" ]]; then
-            echo "::notice::$TODAY, $RESUME_ON se pehle — Actions minutes bachane ke liye skip"
-            echo "run=no" >> $GITHUB_OUTPUT
           else
-            echo "$TODAY — resume date aa gaya, normal chalega"
-            echo "run=yes" >> $GITHUB_OUTPUT
+            echo "::notice::Daily Muli Short is HARD PAUSED. force_run was not true — skipping to save credits."
+            echo "run=no" >> $GITHUB_OUTPUT
           fi
 
   build:
